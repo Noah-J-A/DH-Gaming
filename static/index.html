@@ -41,18 +41,36 @@
 </header>
 
 <main id="layout">
-  <section id="chat-pane">
-    <div id="chat-log"></div>
-    <form id="input-row">
-      <span class="prompt-char">&gt;</span>
-      <input id="chat-input" type="text" autocomplete="off" placeholder="what do you do, choom?" />
-      <button type="submit" id="send-btn">TX</button>
-    </form>
+  <section id="scene-pane">
+    <div id="scene-wrap">
+      <canvas id="scene" width="480" height="270"></canvas>
+      <div id="wipe"></div>
+      <div id="scene-label">LOC // STREET</div>
+    </div>
   </section>
 
-  <aside id="neural-pane">
-    <div class="pane-title">NEURAL LOG <span id="mem-count"></span></div>
-    <div id="memory-list"></div>
+  <aside id="phone">
+    <div class="phone-notch"></div>
+    <div class="phone-status"><span>20:77</span><span>NCNET 5G &#9646;&#9646;&#9646;&#9647;</span></div>
+    <div class="phone-header">NEXUS <span>// your assistant</span></div>
+    <nav class="phone-tabs">
+      <button class="active" data-tab="chat">CHAT</button>
+      <button data-tab="memory">MEMORY <span id="mem-count"></span></button>
+    </nav>
+
+    <div id="tab-chat" class="tab active">
+      <div id="chat-log"></div>
+      <form id="input-row">
+        <span class="prompt-char">&gt;</span>
+        <input id="chat-input" type="text" autocomplete="off" placeholder="what do you do, choom?" />
+        <button type="submit" id="send-btn">TX</button>
+      </form>
+    </div>
+
+    <div id="tab-memory" class="tab">
+      <div class="pane-title">NEURAL LOG</div>
+      <div id="memory-list"></div>
+    </div>
   </aside>
 </main>
 

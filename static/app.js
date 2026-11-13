@@ -64,6 +64,7 @@ function updateHUD(state) {
 async function refreshMemories(deleted = []) {
   // animate deleted memories glitching out first
   if (deleted.length) {
+    showTab("memory"); // let the player watch the engrams die
     for (const d of deleted) {
       const el = document.querySelector(`.mem[data-id="${d.id}"]`);
       if (el) el.classList.add("glitch-out");
@@ -81,6 +82,7 @@ async function refreshMemories(deleted = []) {
     const data = await res.json();
     renderMemories(data.memories || []);
   } catch (e) { /* sidebar is non-critical */ }
+  if (deleted.length) setTimeout(() => showTab("chat"), 900);
 }
 
 function renderMemories(mems) {
@@ -137,6 +139,147 @@ function showRoll(value) {
   });
 }
 
+// ---------- scene: top-down 8-bit, fillRect only ----------
+const ctx = $("scene").getContext("2d");
+ctx.setTransform(2, 0, 0, 2, 0, 0); // art is 240x135 "pixels" on the 480x270 canvas
+const W = 240, H = 135;
+const TEAL = "#00B4C8", YEL = "#FFD23F", PINK = "#FF3B5C";
+const INK = "#07080d", WALL = "#262b40", HI = "#3b425e", STEEL = "#4b5470";
+
+function R(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
+function floor(a, b, y0 = 0, y1 = H, s = 8) {
+  for (let y = y0; y < y1; y += s)
+    for (let x = 0; x < W; x += s) R(x, y, s, Math.min(s, y1 - y), ((x + y - y0) / s) % 2 ? a : b);
+}
+function backWall(h, c, trim) { R(0, 0, W, h, c); R(0, h, W, 2, trim); }
+function neon(x, y, w, h, c) { R(x - 2, y - 2, w + 4, h + 4, c + "33"); R(x, y, w, h, c); }
+function crate(x, y) {
+  R(x, y, 14, 12, "#4a3019"); R(x + 1, y + 1, 12, 10, "#7a5230");
+  R(x + 1, y + 5, 12, 1, "#4a3019"); R(x + 6, y + 1, 1, 10, "#4a3019");
+}
+function terminal(x, y) {
+  R(x, y, 20, 14, STEEL); R(x + 2, y + 2, 16, 9, INK); R(x + 7, y + 14, 6, 3, STEEL);
+  R(x + 3, y + 3, 10, 1, TEAL); R(x + 3, y + 5, 6, 1, TEAL); R(x + 3, y + 7, 12, 1, TEAL);
+}
+
+const SCENES = {
+  alley() {
+    floor("#13151d", "#171a24");
+    R(0, 0, 56, H, WALL); R(184, 0, 56, H, WALL);                                   // side walls
+    for (let y = 3; y < H; y += 7) { R(0, y, 54, 1, "#1d2133"); R(186, y, 54, 1, "#1d2133"); }
+    R(54, 0, 2, H, INK); R(184, 0, 2, H, INK);
+    R(56, 0, 128, 28, "#1d2133"); R(56, 28, 128, 2, HI);                            // back wall
+    neon(76, 8, 36, 7, PINK); neon(150, 5, 5, 18, TEAL);                             // signs
+    R(62, 34, 30, 16, "#2c4636"); R(62, 34, 30, 3, "#3f6a50");                       // dumpster
+    crate(152, 40); crate(160, 52); crate(66, 96);
+    R(88, 116, 26, 4, TEAL + "40"); R(140, 74, 18, 3, PINK + "40");                 // puddles
+  },
+  street() {
+    backWall(34, WALL, HI);
+    for (let x = 6; x < W; x += 40) { R(x, 10, 26, 20, INK); R(x + 2, 12, 22, 16, TEAL + "30"); }
+    neon(10, 3, 46, 4, YEL); neon(128, 3, 60, 4, PINK);
+    floor("#2e3246", "#2a2e41", 36, 106);                                            // sidewalk
+    R(0, 106, W, 2, HI); R(0, 108, W, 27, "#14161e");                               // curb + road
+    for (let x = 4; x < W; x += 24) R(x, 120, 12, 2, YEL);
+    R(168, 111, 44, 18, PINK); R(173, 113, 34, 7, INK); R(171, 128, 7, 3, INK); R(203, 128, 7, 3, INK);
+    R(40, 40, 3, 52, STEEL); R(34, 38, 15, 3, STEEL); R(36, 41, 11, 2, YEL);         // street lamp
+    R(28, 92, 28, 6, YEL + "22");
+    crate(196, 70); crate(204, 82);
+  },
+  corp_lobby() {
+    backWall(40, "#18263a", TEAL);
+    for (let i = 0; i < 12; i++) R(119 - i, 6 + i * 2, i * 2 + 2, 2, TEAL);          // Delta Corp logo
+    for (let i = 0; i < 6; i++) R(119 - i, 14 + i * 2, i * 2 + 2, 2, "#18263a");
+    neon(40, 14, 40, 3, YEL); neon(160, 14, 40, 3, YEL);
+    floor("#c9d2de", "#b9c3d1", 42);                                                 // polished tiles
+    R(76, 54, 88, 14, "#2a3346"); R(76, 54, 88, 2, TEAL); R(76, 68, 88, 2, "#0d1018"); // reception desk
+    terminal(110, 40);
+    for (const x of [14, 214]) { R(x + 1, 56, 10, 8, "#8a5a32"); R(x, 46, 12, 10, "#2f6b3f"); R(x + 2, 42, 8, 6, "#3e8a52"); }
+    R(0, 118, 92, 17, TEAL + "30"); R(148, 118, 92, 17, TEAL + "30"); R(92, 118, 56, 1, TEAL); // glass doors
+    R(196, 80, 10, 14, INK); R(198, 76, 6, 5, STEEL); R(199, 78, 4, 1, PINK);         // security drone
+  },
+  clinic() {
+    backWall(36, "#1b2a2c", HI);
+    neon(18, 8, 4, 16, PINK); neon(12, 14, 16, 4, PINK);                             // med cross
+    R(56, 6, 44, 24, INK); R(58, 8, 40, 20, "#0c3036");                              // vitals monitor
+    for (let x = 60; x < 96; x += 2) R(x, x % 10 ? 18 : 12, 2, 1, TEAL);
+    R(150, 6, 30, 22, STEEL); R(152, 8, 26, 18, "#1b2226"); R(156, 14, 18, 4, "#9aa6b8"); R(172, 12, 4, 8, "#9aa6b8"); // cyberarm
+    floor("#243436", "#203032", 38);
+    R(20, 42, 26, 30, "#334450"); R(22, 44, 22, 12, INK);                            // cabinet
+    for (let x = 24; x < 42; x += 5) R(x, 47, 3, 7, x % 2 ? TEAL : YEL);
+    R(148, 48, 54, 24, STEEL); R(150, 50, 50, 20, "#e2eef2"); R(150, 50, 12, 20, "#a9cbd6"); // bed
+    R(150, 72, 3, 4, INK); R(197, 72, 3, 4, INK);
+    R(208, 40, 2, 34, STEEL); R(204, 40, 10, 2, STEEL); R(205, 43, 8, 9, TEAL + "99"); // IV drip
+    R(60, 96, 30, 14, STEEL); R(62, 98, 26, 10, "#5f6b85"); R(64, 100, 6, 2, PINK);   // surgical tray
+    R(162, 92, 4, 2, PINK); R(170, 98, 2, 2, PINK);
+  },
+  rooftop() {
+    R(0, 0, W, H, "#07080f");
+    floor("#373c50", "#33384a", 0, 108);                                             // roof deck
+    R(0, 108, W, 3, HI); R(0, 111, W, 2, INK);                                      // the edge
+    for (let x = 3; x < W; x += 7) R(x, 117 + ((x * 13) % 14), 2, 2, [TEAL, YEL, PINK][x % 3]); // city below
+    R(16, 14, 34, 22, STEEL); R(18, 16, 30, 18, "#39405a");                         // AC unit
+    for (let y = 18; y < 33; y += 3) R(20, y, 26, 1, "#262b3c");
+    R(190, 6, 36, 34, "#5a4636"); R(190, 6, 36, 4, "#6e5644"); R(194, 40, 3, 8, STEEL); R(219, 40, 3, 8, STEEL);
+    neon(72, 4, 94, 12, PINK); R(74, 6, 90, 8, INK); R(78, 9, 34, 2, YEL); R(116, 9, 44, 2, TEAL); // billboard
+    R(76, 16, 2, 14, STEEL); R(160, 16, 2, 14, STEEL);
+    R(140, 60, 8, 22, STEEL); R(143, 52, 2, 8, STEEL); R(142, 50, 4, 2, PINK);       // antenna
+    crate(40, 78); crate(48, 90);
+  },
+  server_room() {
+    backWall(30, "#0c111e", TEAL);
+    for (let x = 8; x < W; x += 16) R(x, 8, 8, 2, x % 32 ? TEAL + "66" : PINK + "66");
+    floor("#0f131d", "#0c1018", 32);
+    for (let x = 0; x < W; x += 16) R(x, 32, 1, H - 32, TEAL + "14");               // floor grid
+    for (let x = 8; x < W; x += 34) {
+      if (x > 92 && x < 140) continue;                                               // keep the aisle clear
+      R(x, 36, 24, 44, "#192136"); R(x, 36, 24, 3, HI); R(x, 80, 24, 2, INK);
+      for (let y = 42; y < 78; y += 4) { R(x + 3, y, 2, 1, (x + y) % 3 ? TEAL : YEL); R(x + 7, y, 14, 1, INK); }
+    }
+    terminal(110, 44); R(113, 47, 4, 1, PINK); R(119, 61, 2, 20, "#2a2f45");         // root terminal + cable
+    R(0, 114, W, 1, PINK + "88"); R(0, 118, W, 1, TEAL + "88");
+  },
+};
+
+// player: 12x16 sprite (trench coat, teal visor)
+const PLAYER = [
+  "....hhhh....", "...hhhhhh...", "...vvvvvv...", "...ssssss...",
+  "....ssss....", "..cCCCCCCc..", ".CCCCiiCCCC.", ".CCCCiiCCCC.",
+  ".CCCCiiCCCC.", "sCCCbYYbCCCs", ".CCCCCCCCCC.", ".CCCC..CCCC.",
+  ".CCCl..lCCC.", "..CCl..lCC..", "...ll..ll...", "...kk..kk...",
+];
+const PAL = { h: "#1b1b2b", v: TEAL, s: "#d9a07a", c: "#3a271b", C: "#5c4030", i: PINK, b: "#2a1d14", Y: YEL, l: "#22263a", k: INK };
+const PX = 114, PY = 88;
+let sceneLoc = null, bobUp = 0;
+
+function renderScene() {
+  ctx.clearRect(0, 0, W, H);
+  (SCENES[sceneLoc] || SCENES.street)();
+  R(PX + 1, PY + 15, 10, 2, "#00000088"); // shadow
+  PLAYER.forEach((row, j) => [...row].forEach((p, i) => PAL[p] && R(PX + i, PY - bobUp + j, 1, 1, PAL[p])));
+}
+
+function drawScene(location) {
+  const loc = SCENES[location] ? location : "street";
+  if (sceneLoc && loc !== sceneLoc) {
+    const w = $("wipe");
+    w.classList.remove("run"); void w.offsetWidth; w.classList.add("run");
+  }
+  sceneLoc = loc;
+  $("scene-label").textContent = "LOC // " + loc.replace("_", " ").toUpperCase();
+  renderScene();
+}
+
+setInterval(() => { bobUp ^= 1; renderScene(); }, 500); // 2-frame idle bob
+drawScene("street");
+
+// ---------- phone tabs ----------
+function showTab(name) {
+  document.querySelectorAll(".phone-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("#phone .tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
+}
+document.querySelectorAll(".phone-tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
 // ---------- game over (same screen, two causes) ----------
 function showGameOver(reason) {
   const flat = reason === "FLATLINED";
@@ -173,6 +316,7 @@ async function sendMessage(text, hidden = false) {
     for (const roll of data.rolls || []) await showRoll(roll);
 
     updateHUD(data.state);
+    drawScene(data.location);
     const gmEl = addMsg("gm", "");
     await typewriter(gmEl, data.text);
     await refreshMemories(data.deleted_memories || []);
@@ -197,6 +341,7 @@ async function boot(recapOnly = false) {
     const res = await fetch("/api/state");
     const data = await res.json();
     updateHUD(data.state);
+    drawScene(data.location);
     renderMemories(data.memories || []);
     if (data.game_over) { showGameOver(data.game_over_reason); return; }
     if (data.has_memories || recapOnly) {

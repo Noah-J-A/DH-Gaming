@@ -36,8 +36,11 @@ SYSTEM_PROMPT = (
     "dramatic. Cyberware costs creds and 5-20 Humanity; use install_cyberware. Below 50 "
     "Humanity your narration becomes glitchy and paranoid; below 25 you are hostile. Remember "
     "the player's choices, allies, enemies, and debts and bring them back later. Keep replies "
-    "under 120 words, second person, ending with a clear choice. Stay in character."
+    "under 120 words, second person, ending with a clear choice. Stay in character. "
+    "Call set_location whenever the scene moves to a new place."
 )
+
+LOCATIONS = ["alley", "street", "corp_lobby", "clinic", "rooftop", "server_room"]
 
 TOOLS = [
     {
@@ -85,12 +88,26 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_location",
+            "description": "Move the scene to a new place. Call whenever the player arrives somewhere new.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "enum": LOCATIONS},
+                },
+                "required": ["location"],
+            },
+        },
+    },
 ]
 
 ASSISTANT_FILE = Path(__file__).parent / "nexus_assistant.json"
 STATIC_DIR = Path(__file__).parent / "static"
 
-INITIAL_STATE = {"hp": 20, "humanity": 100, "creds": 500, "cyberware": []}
+INITIAL_STATE = {"hp": 20, "humanity": 100, "creds": 500, "cyberware": [], "location": "street"}
 GAME_STATE: dict = {**INITIAL_STATE, "cyberware": []}
 SESSION: dict = {"thread_id": None, "assistant_id": None}
 
@@ -197,6 +214,14 @@ def execute_tool(name: str, args: dict, events: dict) -> dict:
             "humanity_left": GAME_STATE["humanity"],
         }
 
+    if name == "set_location":
+        loc = args.get("location")
+        if loc not in LOCATIONS:
+            return {"error": f"unknown location {loc}", "valid": LOCATIONS}
+        GAME_STATE["location"] = loc
+        events["locations"].append(loc)
+        return {"location": loc}
+
     return {"error": f"unknown tool {name}"}
 
 
@@ -270,7 +295,7 @@ async def apply_cyberpsychosis() -> list:
 async def run_turn(message: str, mode: str) -> dict:
     aid = await ensure_assistant()
     model_cfg = MODE_MODELS.get(mode, MODE_MODELS[DEFAULT_MODE])
-    events = {"rolls": [], "stat_changes": [], "installed": []}
+    events = {"rolls": [], "stat_changes": [], "installed": [], "locations": []}
 
     kwargs = dict(
         assistant_id=aid,
@@ -320,6 +345,8 @@ async def run_turn(message: str, mode: str) -> dict:
         "rolls": events["rolls"],
         "stat_changes": events["stat_changes"],
         "installed": events["installed"],
+        "location": GAME_STATE["location"],
+        "locations": events["locations"],
         "deleted_memories": deleted,
         "game_over": game_over_reason() is not None,
         "game_over_reason": game_over_reason(),
@@ -347,6 +374,7 @@ async def get_state():
         "state": GAME_STATE,
         "has_memories": len(mems) > 0,
         "memories": mems,
+        "location": GAME_STATE["location"],
         "game_over": game_over_reason() is not None,
         "game_over_reason": game_over_reason(),
     }
@@ -388,7 +416,7 @@ async def new_campaign():
 @app.post("/api/reset")
 async def reset_game():
     SESSION["thread_id"] = None
-    GAME_STATE.update({"hp": 20, "humanity": 100, "creds": 500})
+    GAME_STATE.update({"hp": 20, "humanity": 100, "creds": 500, "location": "street"})
     GAME_STATE["cyberware"] = []
     return {"ok": True, "state": GAME_STATE}
 

@@ -66,10 +66,85 @@ select, button, input {
 button { cursor: pointer; color: var(--yellow); border-color: var(--yellow); text-shadow: 0 0 6px var(--yellow); }
 button:hover { background: var(--yellow); color: #000; }
 
-/* ---- layout ---- */
-#layout { flex: 1; display: flex; min-height: 0; }
-#chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#chat-log { flex: 1; overflow-y: auto; padding: 16px 20px; scroll-behavior: smooth; }
+/* ---- layout: scene (left) + phone (right) ---- */
+#layout { flex: 1; display: flex; gap: 18px; min-height: 0; padding: 16px; }
+#scene-pane {
+  flex: 1; min-width: 0; container-type: size;
+  display: flex; align-items: center; justify-content: center;
+}
+#scene-wrap {
+  position: relative;
+  width: min(100cqw, 100cqh * 16 / 9); aspect-ratio: 16 / 9;
+  outline: 2px solid var(--teal);
+  box-shadow: 0 0 24px rgba(0,180,200,.3);
+}
+#scene {
+  display: block; width: 100%; height: 100%;
+  image-rendering: pixelated; image-rendering: crisp-edges;
+}
+#scene-label {
+  position: absolute; left: 8px; top: 6px;
+  font-size: 11px; letter-spacing: 2px; color: var(--yellow);
+  text-shadow: 0 0 6px #000, 0 0 6px var(--yellow);
+}
+/* scanline wipe on scene change (~260ms) */
+#wipe {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: repeating-linear-gradient(0deg, var(--teal) 0 2px, #000 2px 6px);
+}
+#wipe.run { animation: wipe .26s steps(8) forwards; }
+@keyframes wipe {
+  0%   { opacity: 1; clip-path: inset(0 0 0 0); }
+  100% { opacity: 1; clip-path: inset(100% 0 0 0); }
+}
+/* glitch tiers tint + jitter the scene */
+body.g1 #scene { filter: hue-rotate(-12deg) saturate(1.2); }
+body.g2 #scene { filter: hue-rotate(-30deg) saturate(1.5) contrast(1.1); animation: scenejit 1.4s infinite steps(1); }
+body.g3 #scene { filter: hue-rotate(-60deg) saturate(2.2) contrast(1.3); animation: scenejit .45s infinite steps(1); }
+@keyframes scenejit {
+  0%, 85% { transform: none; }
+  88% { transform: translate(-4px, 1px); }
+  92% { transform: translate(3px, -2px) skewX(2deg); }
+  96% { transform: translate(-1px, 2px); }
+}
+
+/* phone frame */
+#phone {
+  position: relative; width: 380px; flex-shrink: 0;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel);
+  border: 2px solid var(--pink); border-radius: 34px;
+  padding: 30px 10px 14px;
+  box-shadow: 0 0 0 6px #11131c, 0 0 0 7px rgba(255,59,92,.4), 0 0 30px rgba(255,59,92,.25);
+}
+.phone-notch {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 110px; height: 20px; background: #11131c; border-radius: 0 0 14px 14px;
+}
+.phone-status {
+  position: absolute; top: 6px; left: 26px; right: 26px;
+  display: flex; justify-content: space-between; font-size: 10px; color: #8ab;
+}
+.phone-header {
+  text-align: center; font-size: 13px; letter-spacing: 3px; color: var(--pink);
+  text-shadow: 0 0 8px var(--pink); padding: 6px 0 10px;
+}
+.phone-header span { color: var(--teal); text-shadow: none; font-size: 11px; letter-spacing: 1px; }
+.phone-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.phone-tabs button { flex: 1; font-size: 11px; letter-spacing: 2px; padding: 5px; color: #677; border-color: #333a44; text-shadow: none; }
+.phone-tabs button.active { color: var(--yellow); border-color: var(--yellow); text-shadow: 0 0 6px var(--yellow); }
+.tab { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.tab.active { display: flex; }
+#tab-memory { overflow-y: auto; padding: 4px 4px 0; }
+#chat-log { flex: 1; overflow-y: auto; padding: 8px 8px; scroll-behavior: smooth; font-size: 13px; }
+
+@media (max-width: 900px) {
+  body { height: auto; min-height: 100vh; overflow: auto; }
+  #layout { flex-direction: column; padding: 10px 16px; }
+  #scene-pane { container-type: normal; flex: none; }
+  #scene-wrap { width: 100%; }
+  #phone { width: 100%; height: 75vh; }
+}
 
 .msg { margin-bottom: 14px; max-width: 95%; white-space: pre-wrap; line-height: 1.45; }
 .msg.user { color: var(--yellow); }
@@ -81,19 +156,15 @@ button:hover { background: var(--yellow); color: #000; }
 @keyframes blink { 50% { opacity: 0; } }
 
 #input-row {
-  display: flex; gap: 8px; padding: 12px 16px;
+  display: flex; gap: 8px; padding: 10px 4px 0;
   border-top: 1px solid var(--teal); background: var(--panel);
 }
+#chat-input { min-width: 0; }
 .prompt-char { color: var(--pink); font-size: 18px; align-self: center; }
 #chat-input { flex: 1; font-size: 15px; border-color: rgba(0,180,200,.4); }
 #chat-input:focus { border-color: var(--teal); box-shadow: 0 0 10px rgba(0,180,200,.4); }
 
 /* ---- neural log ---- */
-#neural-pane {
-  width: 290px; border-left: 1px solid var(--pink);
-  background: var(--panel); overflow-y: auto; padding: 12px;
-  box-shadow: inset 8px 0 20px rgba(255,59,92,0.08);
-}
 .pane-title { color: var(--pink); letter-spacing: 3px; font-size: 12px; margin-bottom: 10px; text-shadow: 0 0 8px var(--pink); }
 #mem-count { color: var(--yellow); }
 .mem {
