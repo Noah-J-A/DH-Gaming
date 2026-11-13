@@ -22,12 +22,16 @@ DEV_UNLIMITED=1 uvicorn main:app --port 8077
 
 (PowerShell: `$env:DEV_UNLIMITED="1"; uvicorn main:app --port 8077`)
 
+**Friends' pass:** share `http://<your-host>/unlimited`. Opening it once sets a cookie that lifts the daily limit
+for that browser (1 year). Everyone else still gets one run a day. Set `UNLIMITED_SLUG` to use a harder-to-guess path.
+
 ## Environment variables
 
 | Variable | Default | What it does |
 |---|---|---|
 | `BACKBOARD_API_KEY` | (required) | Backboard API key. Never commit it. |
 | `DEV_UNLIMITED` | off | `1` lifts the one-run-per-day limit, for testing |
+| `UNLIMITED_SLUG` | `unlimited` | Path of the friends' pass link that lifts the daily limit per browser |
 | `MAX_DAILY_MESSAGES` | `3000` | Global message cap for all players per Toronto day, then "NEXUS is overloaded, come back tomorrow" |
 | `NEXUS_DB` | `nexus.db` (`/tmp/nexus.db` on Vercel) | SQLite file for players and runs |
 | `MODEL_PROVIDER` / `MODEL_NAME` | `anthropic` / `claude-haiku-5-5` | Override the model for every mode |

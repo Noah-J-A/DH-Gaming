@@ -1,5 +1,6 @@
 """NEXUS — cyberpunk tabletop RPG with a Backboard-powered GM that remembers everything."""
 import asyncio
+import contextvars
 import hashlib
 import inspect
 import json
@@ -17,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -45,6 +46,10 @@ DEFAULT_MODE = "story"
 
 MAX_TURNS = 5  # player prompts per run
 DEV_UNLIMITED = os.environ.get("DEV_UNLIMITED") == "1"  # lifts the one-run-per-day limit
+# Friends' pass: visiting /<UNLIMITED_SLUG> sets a cookie that lifts the daily limit for that browser
+UNLIMITED_SLUG = (os.environ.get("UNLIMITED_SLUG") or "unlimited").strip("/")
+UNLIMITED_COOKIE = "nexus_unlimited"
+UNLIMITED = contextvars.ContextVar("unlimited", default=False)  # set per request by the cookie middleware
 MAX_DAILY_MESSAGES = int(os.environ.get("MAX_DAILY_MESSAGES") or 3000)  # global cap, all players
 IP_LIMIT, IP_WINDOW = 20, 600  # messages per IP per 10 minutes
 PROMPT_MIN, PROMPT_MAX = 3, 280
@@ -477,7 +482,7 @@ def daily_refresh(p: dict):
 
 
 def can_play(ctx: Ctx) -> bool:
-    return DEV_UNLIMITED or ctx.active or not played_today(ctx.p["id"])
+    return DEV_UNLIMITED or UNLIMITED.get() or ctx.active or not played_today(ctx.p["id"])
 
 
 # ---------------------------------------------------------------------------
@@ -938,7 +943,7 @@ def status_fields(ctx: Ctx) -> dict:
         "can_play": can_play(ctx),
         "active": ctx.active,
         "next_reset_seconds": next_reset_seconds(),
-        "dev_unlimited": DEV_UNLIMITED,
+        "dev_unlimited": DEV_UNLIMITED or UNLIMITED.get(),
         "streak": p["streak"] or 0,
         "best_score": p["best_score"] or 0,
         "history": p["missions"][-5:],
@@ -1190,6 +1195,7 @@ async def player_cookie(request: Request, call_next):
         pid = ""
     new = not pid
     request.state.pid = pid or str(uuid.uuid4())
+    UNLIMITED.set(request.cookies.get(UNLIMITED_COOKIE) == "1")
     response = await call_next(request)
     if new:
         https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
@@ -1220,6 +1226,15 @@ HANDLE_RE = re.compile(r"^[A-Za-z0-9_ ]{3,16}$")
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get(f"/{UNLIMITED_SLUG}")
+async def unlimited_pass(request: Request):
+    """Share this link with friends: their browser can play as many runs a day as they like."""
+    resp = RedirectResponse("/", status_code=303)
+    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    resp.set_cookie(UNLIMITED_COOKIE, "1", max_age=365 * 24 * 3600, httponly=True, samesite="lax", secure=https)
+    return resp
 
 
 @app.get("/api/state")
