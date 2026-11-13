@@ -33,12 +33,24 @@ for that browser (1 year). Everyone else still gets one run a day. Set `UNLIMITE
 | `DEV_UNLIMITED` | off | `1` lifts the one-run-per-day limit, for testing |
 | `UNLIMITED_SLUG` | `unlimited` | Path of the friends' pass link that lifts the daily limit per browser |
 | `MAX_DAILY_MESSAGES` | `3000` | Global message cap for all players per Toronto day, then "NEXUS is overloaded, come back tomorrow" |
-| `NEXUS_DB` | `nexus.db` (`/tmp/nexus.db` on Vercel) | SQLite file for players and runs |
+| `DATABASE_URL` | unset | Postgres connection string (Supabase). When set, everything is stored there in schema `nexus`; when unset, SQLite |
+| `NEXUS_DB` | `nexus.db` (`/tmp/nexus.db` on Vercel) | SQLite file for players and runs when `DATABASE_URL` is unset |
 | `MODEL_PROVIDER` / `MODEL_NAME` | `anthropic` / `claude-haiku-5-5` | Override the model for every mode |
+
+## Deploy (Vercel + Supabase)
+
+Progress lives in Supabase Postgres, so redeploys and cold starts keep every profile, streak and leaderboard.
+
+1. In Supabase, open a project > **Connect** > copy the **Transaction pooler** string (port 6543) and put your database password in it.
+2. Add it to Vercel as `DATABASE_URL` (Settings > Environment Variables, mark it Sensitive), next to `BACKBOARD_API_KEY`.
+3. `vercel deploy --prod`. On first request the app creates schema `nexus` with tables `players`, `runs`, `usage` and `rate_hits`.
+   The schema is not exposed through Supabase's public API, so only the server can read it. It can share a project with other apps.
+
+Push updates whenever you like: the code redeploys, the data stays. Free Supabase projects pause after 7 days with no traffic.
 
 ## How a day works
 
-1. **First visit:** 18+ notice, a handle and a class (BREAKER, SPLICER, GHOST, HUSTLER), each with stats and a starter item. The server sets an httponly `nexus_pid` cookie; everything is keyed to it in SQLite.
+1. **First visit:** 18+ notice, a handle and a class (BREAKER, SPLICER, GHOST, HUSTLER), each with stats and a starter item. The server sets an httponly `nexus_pid` cookie; everything is keyed to it in the database.
 2. **Black market:** 6 daily items for creds. Inventory holds 6.
 3. **JACK IN:** today's mission seed from `missions.py` (14 seeds, rotating by day of year). The GM retells it with your own NPCs and gear and sets a **THIS TURN** objective, sometimes with a constraint.
 4. **Each prompt:** the GM calls `rate_action` (specificity, creativity, fit, a quote, up to 3 +/- lines). Python computes `action = 3S + 4C + 3F`, rolls the d20, `power = 0.8 × action + 0.2 × d20 × 5` (+ up to 5 for a class stat), picks the tier and the GM must narrate it. A score card shows the breakdown, combo and turn grade.
@@ -79,6 +91,6 @@ for that browser (1 year). Everyone else still gets one run a day. Set `UNLIMITE
 ## Known limitations
 
 - Replies are non-streaming; the typewriter effect is client-side.
-- On Vercel, SQLite lives in `/tmp`: per instance and wiped on cold starts, so profiles and the leaderboard do not persist there. Use a host with a disk, or point `NEXUS_DB` at persistent storage.
-- Per-IP rate limits are kept in memory per server process.
+- Without `DATABASE_URL`, Vercel keeps SQLite in `/tmp`: per instance and wiped on cold starts. Set `DATABASE_URL` for real deploys.
+- Per-IP rate limits are stored in the database as salted hashes, never raw IPs.
 - Day boundaries use `zoneinfo` for America/Toronto, with built-in DST rules when the OS has no tz database (Windows).

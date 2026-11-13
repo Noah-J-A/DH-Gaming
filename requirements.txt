@@ -2,3 +2,4 @@ fastapi
 uvicorn
 backboard-sdk==1.5.19
 python-dotenv
+psycopg[binary]==3.3.9
