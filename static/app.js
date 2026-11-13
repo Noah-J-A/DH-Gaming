@@ -378,6 +378,7 @@ function advanceDialogue() {
 }
 dlg.addEventListener("click", advanceDialogue);
 $("d20-overlay").addEventListener("click", () => rollContinue && rollContinue());
+$("scorecard").addEventListener("click", () => rollContinue && rollContinue());
 document.addEventListener("keydown", (e) => {
   if (!dlgLog.classList.contains("hidden")) { if (e.key === "Escape") dlgLog.classList.add("hidden"); return; }
   if (e.key !== "Enter" && e.key !== " ") return;
@@ -475,10 +476,103 @@ function pickEffect(d) {
   const r = d.turn_rating || {}, ch = d.stat_changes || [];
   const hpLoss = -ch.filter((c) => c.stat === "hp" && c.amount < 0).reduce((a, c) => a + c.amount, 0);
   if (hpLoss >= 5 || r.tier === "DISASTER" || r.d20 === 1) return "explosion";
-  if (r.tier === "CRITICAL SUCCESS" || r.d20 === 20 || ["S", "A"].includes(r.turn_grade)) return "sparkle";
+  if (r.tier === "CRITICAL SUCCESS" || r.d20 === 20) return "sparkle";
   if ((d.installed || []).length) return "glitch";
   if (hpLoss > 0 || r.tier === "FAIL") return "hit";
   return null;
+}
+
+// ---------- loading bar: eases to ~90%, completes when the reply lands ----------
+const STOP = new Set("then with into onto from that this they them their your what when where while there here just over under about".split(" "));
+const LOAD_LINES = ["Decrypting your bad idea...", "NEXUS is judging you...", "Bribing the firewall...",
+  "Rolling bones in the server room...", "Asking the harbour fog for permission...", "Waking the GM up..."];
+const KW_LINES = ["Running \u201C%\u201D past Delta's lawyers...", "Calculating how \u201C%\u201D goes wrong...", "Weighing \u201C%\u201D against the odds..."];
+const keyWords = (text) => [...new Set((text.match(/[A-Za-z][A-Za-z'-]{3,}/g) || []).filter((w) => !STOP.has(w.toLowerCase())))]
+  .sort((a, b) => b.length - a.length).slice(0, 3);
+let loadTick = null, loadSay = null;
+function startLoader(text = "") {
+  const bar = $("ld-bar"), txt = $("ld-text"), kws = keyWords(text);
+  if (!bar.children.length) for (let i = 0; i < 20; i++) bar.appendChild(document.createElement("i"));
+  const segs = [...bar.children], t0 = performance.now();
+  const playlist = [];
+  LOAD_LINES.forEach((l, i) => { playlist.push([l]); if (kws[i]) playlist.push([KW_LINES[i % KW_LINES.length], kws[i]]); });
+  let li = Math.floor(Math.random() * 3);
+  const say = () => {
+    const [tpl, kw] = playlist[li++ % playlist.length], [a, b] = tpl.split("%");
+    txt.textContent = "";
+    txt.append(a);
+    if (kw) { const m = document.createElement("mark"); m.textContent = kw; txt.append(m, b); }
+  };
+  clearInterval(loadTick); clearInterval(loadSay);
+  say(); loadSay = setInterval(say, 1700);
+  loadTick = setInterval(() => {
+    const lit = Math.round(20 * 0.9 * (1 - Math.exp(-(performance.now() - t0) / 3500)));
+    segs.forEach((sg, i) => (sg.className = i < lit ? (Math.random() < 0.1 ? "on gl" : "on") : ""));
+  }, 120);
+  $("loader").classList.remove("hidden", "done");
+}
+function stopLoader() {
+  if (!loadTick) return;
+  clearInterval(loadTick); clearInterval(loadSay); loadTick = loadSay = null;
+  [...$("ld-bar").children].forEach((sg) => (sg.className = "on"));
+  $("loader").classList.add("done");
+  setTimeout(() => $("loader").classList.add("hidden"), 350);
+}
+
+// ---------- score card: meters, +/- lines, count-up, grade pop ----------
+function showScoreCard(r) {
+  return new Promise((resolve) => {
+    $("sc-turn").textContent = `// PROMPT ${r.n}`;
+    $("sc-quote").textContent = `\u201C${r.quote}\u201D`;
+    const meters = $("sc-meters");
+    meters.textContent = "";
+    for (const [k, v] of [["SPECIFICITY", r.specificity], ["CREATIVITY", r.creativity], ["FIT", r.fit]]) {
+      const row = document.createElement("div"); row.className = "sc-meter";
+      const lab = document.createElement("span"); lab.textContent = k;
+      const track = document.createElement("div"); track.className = "sc-track";
+      const fill = document.createElement("div"); fill.className = "sc-fill" + (v <= 3 ? " bad" : v >= 7 ? " good" : "");
+      track.appendChild(fill);
+      const val = document.createElement("b"); val.textContent = `${v}/10`;
+      row.append(lab, track, val); meters.appendChild(row);
+      setTimeout(() => (fill.style.width = v * 10 + "%"), 60);
+    }
+    const lines = $("sc-lines");
+    lines.textContent = "";
+    const add = (text, cls, i) => {
+      const el = document.createElement("div"); el.className = "sc-line " + cls; el.textContent = text;
+      el.style.animationDelay = 0.45 + i * 0.22 + "s"; lines.appendChild(el);
+    };
+    add(`POWER ${r.power} = prompt ${r.action_score} \u00D7 0.8 + d20 ${r.d20}\u00D75 \u00D7 0.2` +
+      (r.stat_bonus ? ` + ${r.stat.toUpperCase()} ${r.stat_bonus}` : "") + `  \u2192  ${r.tier}`, "info", 0);
+    const deltas = r.breakdown.filter((b) => b.delta);
+    deltas.forEach((b, i) => add(`${signed(b.delta)} ${b.label}`, b.delta > 0 ? "pos" : "neg", i + 1));
+    $("sc-combo").textContent = r.combo_bonus ? `COMBO x${r.combo}  +${r.combo_bonus}` : "";
+    const score = $("sc-score"), grade = $("sc-grade"), hint = $("sc-hint");
+    score.textContent = "0"; grade.textContent = ""; grade.className = "sc-grade"; hint.classList.add("hidden");
+    $("scorecard").classList.remove("hidden");
+    const t0 = performance.now() + 700 + deltas.length * 220, dur = 800;
+    const count = () => {
+      const k = Math.max(0, Math.min(1, (performance.now() - t0) / dur));
+      score.textContent = Math.round(r.turn_score * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) return setTimeout(count, 30);
+      grade.textContent = r.turn_grade;
+      grade.className = `sc-grade grade-${r.turn_grade} pop`;
+      if (deltas.some((b) => b.delta < 0)) {
+        const flash = $("flash"); flash.className = "blood boom"; setTimeout(() => (flash.className = ""), 500);
+        document.body.classList.add("shake"); setTimeout(() => document.body.classList.remove("shake"), 500);
+      }
+      if (["S", "A"].includes(r.turn_grade)) playEffect("sparkle");
+      hint.classList.remove("hidden");
+      const shownAt = performance.now();
+      rollContinue = () => {
+        if (performance.now() - shownAt < 400) return; // anti-skip
+        rollContinue = null;
+        $("scorecard").classList.add("hidden");
+        resolve();
+      };
+    };
+    count();
+  });
 }
 
 // ---------- mission banner ----------
@@ -548,7 +642,8 @@ async function showMarket(note = "") {
 function showResults(d) {
   const r = d.rating || {}, s = d.state || {}, grade = r.grade || "D";
   const head = r.reason === "flatlined" ? "FLATLINED" : r.reason === "cyberpsychosis" ? "CYBERPSYCHOSIS"
-    : ["S", "A", "B"].includes(grade) ? "MISSION COMPLETE" : "TIME OUT";
+    : r.outcome === "success" ? "MISSION COMPLETE" : r.outcome === "partial" ? "PARTIAL SUCCESS"
+    : r.reason === "out of turns" ? "TIME OUT" : "MISSION FAILED";
   const title = document.querySelector("#gameover .go-title");
   title.textContent = title.dataset.text = head;
   title.classList.toggle("win", head === "MISSION COMPLETE");
@@ -558,11 +653,35 @@ function showResults(d) {
   g.className = "go-grade grade-" + grade + (grade === "D" || grade === "F" ? " glitch" : "");
   $("go-score").textContent = `${r.score ?? 0}/${r.max || 600}`;
   $("go-verdict").textContent = r.verdict || "";
-  const turnRows = (r.turns || []).map((t) => `#${t.n} ${t.tier.padEnd(16)} ${String(t.turn_score).padStart(3)}  "${t.quote}"`);
+  const list = $("go-turns");
+  list.textContent = "";
+  for (const t of r.turns || []) {
+    const row = document.createElement("div"); row.className = "go-turn";
+    const head = document.createElement("div"); head.className = "go-turn-head";
+    const left = document.createElement("span"); left.textContent = `#${t.n}  ${t.tier}`;
+    const right = document.createElement("b"); right.className = "grade-" + t.turn_grade; right.textContent = `${t.turn_score} ${t.turn_grade}`;
+    head.append(left, right);
+    const q = document.createElement("div"); q.className = "go-quote"; q.textContent = `\u201C${t.quote}\u201D`;
+    row.append(head, q);
+    const deltas = t.breakdown.filter((b) => b.delta).map((b) => [b.delta, b.label]);
+    if (t.combo_bonus) deltas.push([t.combo_bonus, `combo x${t.combo}`]);
+    for (const [v, label] of deltas) {
+      const l = document.createElement("div"); l.className = "sc-line " + (v > 0 ? "pos" : "neg"); l.textContent = `${signed(v)} ${label}`;
+      row.appendChild(l);
+    }
+    list.appendChild(row);
+  }
+  const items = (r.items || []).map((i) => (i.event === "gained" ? "+" : "-") + i.name).join(", ");
+  const npcs = (r.npcs || []).map((c) => (c.event === "met" ? "met " + c.name : `${c.name} ${signed(c.delta)}`)).join(", ");
+  $("go-summary").textContent = [
+    `MISSION ${(r.outcome || "fail").toUpperCase()} +${r.mission_bonus || 0}   //   TOTAL ${r.score ?? 0}/${r.max || 600} (${r.pct ?? 0}%)`,
+    `CREDS +\u00A4${r.creds_earned || 0}${r.streak_bonus ? ` (streak bonus +${r.streak_bonus})` : ""}   //   HUMANITY ${signed(r.humanity_change || 0)}`,
+    `ITEMS: ${items || "no change"}`,
+    `CONTACTS: ${npcs || "none"}`,
+    `STREAK: ${r.streak ?? d.streak ?? 0} DAY${(r.streak ?? d.streak) === 1 ? "" : "S"}` + (r.rank ? `   //   RANK #${r.rank} TODAY` : ""),
+  ].join("\n");
   $("go-stats").textContent =
-    (turnRows.length ? turnRows.join("\n") + `\nMISSION ${(r.outcome || "fail").toUpperCase()} +${r.mission_bonus || 0}  //  +\u00A4${r.creds_earned || 0}\n\n` : "") +
-    `TURNS USED: ${d.turn}/${d.max_turns}\n` +
-    `HP ${s.hp}  //  HUMANITY ${s.humanity}  //  CREDS ¤${s.creds}\n` +
+    `HP ${s.hp}  //  HUMANITY ${s.humanity}  //  CREDS \u00A4${s.creds}\n` +
     `CYBERWARE: ${(s.cyberware || []).join(", ") || "none"}`;
   $("restart-btn").textContent = d.can_play ? "PLAY AGAIN" : "CONTINUE";
   $("gameover").classList.remove("hidden");
@@ -633,9 +752,11 @@ async function sendMessage(text, kind = "turn", note = "") {
   setBusy(true);
   if (!hidden) addMsg("user", text);
   showPending(note);
+  startLoader(hidden ? "" : text);
 
   try {
     const res = await postJSON("/api/message", { message: hidden ? "" : text, mode: $("mode").value, kind });
+    stopLoader();
     if (res.status === 409) {
       const st = await (await fetch("/api/state")).json();
       lastData = st;
@@ -658,7 +779,7 @@ async function sendMessage(text, kind = "turn", note = "") {
     // queue: rolls (overlay first), stat changes, implants, lost engrams, then NEXUS
     const tr = data.turn_rating, changes = data.stat_changes || [];
     const installed = data.installed || [], deleted = data.deleted_memories || [];
-    const lines = tr ? [{ ...sys(scoreLine(tr)), before: () => showRoll(tr) }] : [];
+    const lines = tr ? [{ ...sys(scoreLine(tr)), before: async () => { await showRoll(tr); await showScoreCard(tr); } }] : [];
     const humDelta = changes.filter((c) => c.stat === "humanity").reduce((a, c) => a + c.amount, 0);
     const implantCost = humanity + humDelta - data.state.humanity; // read before updateHUD
     for (const c of changes) lines.push(sys(`${STAT_NAMES[c.stat] || c.stat} ${c.amount > 0 ? "+" : ""}${c.amount}`));
@@ -693,6 +814,7 @@ async function sendMessage(text, kind = "turn", note = "") {
     await (memP || refreshMemories());
     if (data.run_over) { runOver = true; updateBeat(data); showResults(data); }
   } catch (e) {
+    stopLoader();
     await playDialogue([sys("!! uplink failed: " + e.message)]);
   } finally {
     setBusy(false);

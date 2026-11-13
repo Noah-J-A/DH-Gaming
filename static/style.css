@@ -455,3 +455,60 @@ button:disabled:hover { background: #000; color: var(--yellow); }
   .mk-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .beat { margin: 2px 0 4px; font-size: 11px; }
 }
+
+/* ---- loading bar ---- */
+#loader { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 6; width: min(86%, 420px);
+  padding: 8px 10px; background: rgba(3,5,9,.88); border: 1px solid var(--teal); box-shadow: 0 0 14px rgba(0,180,200,.35);
+  transition: opacity .3s; }
+#loader.hidden { display: none; }
+#loader.done { opacity: 0; }
+.ld-bar { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 10px; }
+.ld-bar i { background: #102028; }
+.ld-bar i.on { background: var(--teal); box-shadow: 0 0 6px var(--teal); }
+.ld-bar i.gl { background: var(--pink); box-shadow: 0 0 6px var(--pink); transform: translateY(-1px); }
+.ld-text { margin-top: 6px; font-size: 12px; color: #cde; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ld-text mark { background: none; color: var(--yellow); text-shadow: 0 0 6px var(--yellow); }
+
+/* ---- score card ---- */
+#scorecard { position: fixed; inset: 0; z-index: 38; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.62); cursor: pointer; padding: 12px; }
+#scorecard.hidden { display: none; }
+.sc-box { width: min(100%, 520px); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--teal);
+  box-shadow: 0 0 30px rgba(0,180,200,.4); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.sc-head { color: var(--yellow); letter-spacing: 3px; font-size: 13px; }
+.sc-head span { color: #789; }
+.sc-quote { color: #cde; font-style: italic; font-size: 13px; line-height: 1.4; }
+.sc-meters { display: flex; flex-direction: column; gap: 6px; }
+.sc-meter { display: grid; grid-template-columns: 96px 1fr 44px; gap: 8px; align-items: center; font-size: 11px; letter-spacing: 1px; }
+.sc-meter b { color: #cde; text-align: right; }
+.sc-track { height: 8px; background: #071218; border: 1px solid #1d3a44; }
+.sc-fill { height: 100%; width: 0; background: var(--yellow); box-shadow: 0 0 8px var(--yellow); transition: width .7s ease-out; }
+.sc-fill.good { background: var(--teal); box-shadow: 0 0 8px var(--teal); }
+.sc-fill.bad { background: var(--pink); box-shadow: 0 0 8px var(--pink); }
+.sc-lines { display: flex; flex-direction: column; gap: 3px; min-height: 1em; }
+.sc-line { font-size: 12.5px; line-height: 1.35; opacity: 0; animation: scline .3s forwards; }
+.go-turn .sc-line { opacity: 1; animation: none; }
+.sc-line.info { color: #8ab; font-size: 11px; }
+.sc-line.pos { color: #3dff9a; text-shadow: 0 0 6px rgba(61,255,154,.5); }
+.sc-line.neg { color: var(--pink); text-shadow: 0 0 6px rgba(255,59,92,.5); }
+@keyframes scline { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+.sc-foot { display: flex; align-items: flex-end; justify-content: space-between; }
+.sc-score { font-size: 44px; color: #fff; text-shadow: 0 0 14px var(--teal); line-height: 1; }
+.sc-combo { color: var(--yellow); font-size: 12px; letter-spacing: 2px; min-height: 1em; }
+.sc-grade { font-size: 64px; font-weight: bold; line-height: 1; min-width: 50px; text-align: right; }
+.sc-grade.pop { animation: pop .35s cubic-bezier(.2, 1.8, .5, 1); }
+@keyframes pop { 0% { transform: scale(.2); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.sc-hint { color: var(--yellow); font-size: 12px; letter-spacing: 3px; text-align: center; animation: blink .9s steps(1) infinite; }
+.sc-hint.hidden { visibility: hidden; }
+
+/* ---- detailed results ---- */
+.go-turns { display: flex; flex-direction: column; gap: 8px; text-align: left; margin: 10px 0; }
+.go-turn { border: 1px solid #1d3a44; background: rgba(5,9,13,.9); padding: 8px 10px; }
+.go-turn-head { display: flex; justify-content: space-between; letter-spacing: 2px; font-size: 13px; color: #cde; }
+.go-quote { color: #8ab; font-style: italic; font-size: 12px; margin: 3px 0 4px; }
+.go-summary { color: #cde; font-size: 13px; line-height: 1.7; white-space: pre-wrap; margin-bottom: 10px; }
+@media (max-width: 600px) {
+  .sc-score { font-size: 34px; } .sc-grade { font-size: 48px; }
+  .sc-meter { grid-template-columns: 80px 1fr 38px; }
+  #loader { top: 6px; padding: 6px 8px; }
+}

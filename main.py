@@ -308,7 +308,7 @@ def new_run_state() -> dict:
     return {"hp": START_HP, "location": "street", "mission": {"title": "", "objective": ""},
             "turn": 0, "max_turns": MAX_TURNS, "rating": None, "opened": False, "humanity_start": None,
             "turns": [], "combo": 0, "creds_gained": 0, "beat": {"text": "", "constraint": ""}, "seed": None,
-            "grants": 0, "npc_log": []}
+            "grants": 0, "npc_log": [], "item_log": []}
 
 
 api_key = os.environ.get("BACKBOARD_API_KEY", "")
@@ -792,6 +792,7 @@ def execute_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
         p["inventory"].append(item)
         st["grants"] += 1
         events["items_gained"].append(item)
+        st["item_log"].append({"event": "gained", "name": item["name"]})
         return {"granted": item, "inventory": [i["name"] for i in p["inventory"]]}
 
     if name == "use_item":
@@ -806,6 +807,7 @@ def execute_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
         if args.get("consumed", True) is not False:
             p["inventory"].remove(item)
             events["items_used"].append(item["name"])
+            st["item_log"].append({"event": "used", "name": item["name"]})
         return {"used": item["name"], "consumed": args.get("consumed", True) is not False}
 
     if name == "submit_rating":
@@ -845,7 +847,8 @@ def finish_run(ctx: Ctx, reason: str):
     total = sum(t["turn_score"] for t in st["turns"]) + MISSION_BONUS[outcome]
     pct = round(100 * total / MAX_SCORE)
     r.update(outcome=outcome, mission_bonus=MISSION_BONUS[outcome], score=total, max=MAX_SCORE, pct=pct,
-             grade=grade_for(pct), turns=st["turns"], npcs=st["npc_log"])
+             grade=grade_for(pct), turns=st["turns"], npcs=st["npc_log"], items=st["item_log"],
+             streak=p["streak"] or 0)
     if reason == "cyberpsychosis":  # chrome burns out: lose all cyberware, reset humanity, half the creds
         p["cyberware"] = []
         p["humanity"] = 40
