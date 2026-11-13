@@ -112,7 +112,9 @@ function renderMemories(mems) {
 }
 
 // ---------- d20 ----------
-function showRoll(value) {
+// rec: the server's turn rating {power, d20, tier, ...}
+function showRoll(rec) {
+  const value = rec.d20;
   return new Promise((resolve) => {
     const overlay = $("d20-overlay");
     const d20 = $("d20");
@@ -130,11 +132,8 @@ function showRoll(value) {
       if (performance.now() - start > 1000) {
         clearInterval(spin);
         num.textContent = value;
-        label.textContent =
-          value === 20 ? "NATURAL 20 \u2014 LEGENDARY" :
-          value === 1 ? "NATURAL 1 \u2014 CATASTROPHE" :
-          value >= 15 ? "SUCCESS" :
-          value >= 10 ? "SUCCESS AT A COST" : "FAILURE";
+        label.textContent = `Prompt power ${rec.power}, d20 ${value}, result: ${rec.tier}` +
+          (value === 20 ? " (NAT 20)" : value === 1 ? " (NAT 1)" : "");
         if (value === 20 || value === 1) {
           d20.classList.add(value === 20 ? "nat20" : "nat1");
           const flash = $("flash");
@@ -403,10 +402,12 @@ $("dlg-log-btn").addEventListener("click", (e) => {
 });
 $("dlg-log-close").addEventListener("click", () => dlgLog.classList.add("hidden"));
 
-function rollLine(v) {
-  const res = v === 20 ? "CRITICAL SUCCESS" : v === 1 ? "CRITICAL FAILURE" :
-    v >= 15 ? "SUCCESS" : v >= 10 ? "SUCCESS AT A COST" : "FAILURE";
-  return `Risk check: d20 ${v} vs DC 15. ${res}`;
+const signed = (n) => (n > 0 ? "+" : "") + n;
+function scoreLine(r) {
+  const parts = r.breakdown.filter((b) => b.delta).map((b) => `${signed(b.delta)} ${b.label}`);
+  if (r.combo_bonus) parts.push(`+${r.combo_bonus} combo x${r.combo}`);
+  return `Prompt power ${r.power}, d20 ${r.d20}: ${r.tier}. Turn score ${r.turn_score} (${r.turn_grade})` +
+    (parts.length ? "\n" + parts.join(", ") : "");
 }
 
 // ---------- screen fx: canvas + CSS only, each under 900ms ----------
@@ -466,15 +467,14 @@ function playEffect(type) {
   requestAnimationFrame(frame);
 }
 
-// strongest one only: explosion > sparkle > glitch > hit. Rolls are raw d20s; success = 15+
+// strongest one only: explosion > sparkle > glitch > hit, driven by the server's outcome tier
 function pickEffect(d) {
-  const rolls = d.rolls || [], ch = d.stat_changes || [];
+  const r = d.turn_rating || {}, ch = d.stat_changes || [];
   const hpLoss = -ch.filter((c) => c.stat === "hp" && c.amount < 0).reduce((a, c) => a + c.amount, 0);
-  const gained = ch.some((c) => (c.stat === "hp" || c.stat === "creds") && c.amount > 0);
-  if (hpLoss >= 5 || rolls.includes(1)) return "explosion";
-  if (rolls.includes(20) || (gained && rolls.some((v) => v >= 15))) return "sparkle";
+  if (hpLoss >= 5 || r.tier === "DISASTER" || r.d20 === 1) return "explosion";
+  if (r.tier === "CRITICAL SUCCESS" || r.d20 === 20 || ["S", "A"].includes(r.turn_grade)) return "sparkle";
   if ((d.installed || []).length) return "glitch";
-  if (hpLoss > 0 || rolls.some((v) => v < 15)) return "hit";
+  if (hpLoss > 0 || r.tier === "FAIL") return "hit";
   return null;
 }
 
@@ -500,9 +500,11 @@ function showResults(d) {
   const g = $("go-grade");
   g.textContent = g.dataset.text = grade;
   g.className = "go-grade grade-" + grade + (grade === "D" || grade === "F" ? " glitch" : "");
-  $("go-score").textContent = `${r.score ?? 0}/100`;
+  $("go-score").textContent = `${r.score ?? 0}/${r.max || 600}`;
   $("go-verdict").textContent = r.verdict || "";
+  const turnRows = (r.turns || []).map((t) => `#${t.n} ${t.tier.padEnd(16)} ${String(t.turn_score).padStart(3)}  "${t.quote}"`);
   $("go-stats").textContent =
+    (turnRows.length ? turnRows.join("\n") + `\nMISSION ${(r.outcome || "fail").toUpperCase()} +${r.mission_bonus || 0}  //  +\u00A4${r.creds_earned || 0}\n\n` : "") +
     `TURNS USED: ${d.turn}/${d.max_turns}\n` +
     `HP ${s.hp}  //  HUMANITY ${s.humanity}  //  CREDS ¤${s.creds}\n` +
     `CYBERWARE: ${(s.cyberware || []).join(", ") || "none"}`;
@@ -598,9 +600,9 @@ async function sendMessage(text, kind = "turn", note = "") {
     if (fxType) playEffect(fxType);
 
     // queue: rolls (overlay first), stat changes, implants, lost engrams, then NEXUS
-    const rolls = data.rolls || [], changes = data.stat_changes || [];
+    const tr = data.turn_rating, changes = data.stat_changes || [];
     const installed = data.installed || [], deleted = data.deleted_memories || [];
-    const lines = rolls.map((v) => ({ ...sys(rollLine(v)), before: () => showRoll(v) }));
+    const lines = tr ? [{ ...sys(scoreLine(tr)), before: () => showRoll(tr) }] : [];
     const humDelta = changes.filter((c) => c.stat === "humanity").reduce((a, c) => a + c.amount, 0);
     const implantCost = humanity + humDelta - data.state.humanity; // read before updateHUD
     for (const c of changes) lines.push(sys(`${STAT_NAMES[c.stat] || c.stat} ${c.amount > 0 ? "+" : ""}${c.amount}`));
@@ -615,7 +617,7 @@ async function sendMessage(text, kind = "turn", note = "") {
     lines.push({ who: "gm", text: clean(data.text) });
 
     // reveal HUD + scene right after the dice
-    const first = lines[rolls.length], firstBefore = first.before;
+    const first = lines[tr ? 1 : 0], firstBefore = first.before;
     first.before = async () => {
       updateHUD(data.state);
       updateMission(data);
