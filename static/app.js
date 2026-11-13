@@ -29,9 +29,10 @@ function corrupt(text) {
 function typewriter(el, text) {
   return new Promise((resolve) => {
     el.classList.add("cursor");
-    let i = 0;
+    const start = performance.now();
+    const CPS = 220; // chars per second; time-based so background-tab throttling can't stall it
     const tick = () => {
-      i = Math.min(text.length, i + 2 + ((Math.random() * 3) | 0));
+      const i = Math.min(text.length, Math.floor(((performance.now() - start) / 1000) * CPS));
       el.textContent = corrupt(text.slice(0, i));
       chatLog.scrollTop = chatLog.scrollHeight;
       if (i < text.length) setTimeout(tick, 18);
@@ -111,10 +112,10 @@ function showRoll(value) {
     d20.classList.remove("nat20", "nat1");
     overlay.classList.remove("hidden");
 
-    let spins = 0;
+    const start = performance.now();
     const spin = setInterval(() => {
       num.textContent = 1 + ((Math.random() * 20) | 0);
-      if (++spins > 14) {
+      if (performance.now() - start > 1000) {
         clearInterval(spin);
         num.textContent = value;
         label.textContent =

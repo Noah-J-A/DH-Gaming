@@ -22,7 +22,7 @@
     {
       "label": "nexus-run",
       "type": "shell",
-      "command": "powershell -ExecutionPolicy Bypass -Command \"& .venv/Scripts/python.exe -m uvicorn main:app --port 8077\"",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn main:app --port 8077 --reload",
       "options": { "cwd": "${workspaceFolder}" },
       "isBackground": true
     }

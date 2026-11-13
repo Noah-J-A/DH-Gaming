@@ -137,7 +137,7 @@ async def ensure_assistant() -> str:
         return SESSION["assistant_id"]
     if ASSISTANT_FILE.exists():
         data = json.loads(ASSISTANT_FILE.read_text())
-        SESSION["assistant_id"] = data["assistant_id"]
+        SESSION["assistant_id"] = str(data["assistant_id"])
         return SESSION["assistant_id"]
     assistant = await _call(
         client.create_assistant,
@@ -145,7 +145,7 @@ async def ensure_assistant() -> str:
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
     )
-    aid = _get(assistant, "assistant_id", "id")
+    aid = str(_get(assistant, "assistant_id", "id"))
     ASSISTANT_FILE.write_text(json.dumps({"assistant_id": aid}))
     SESSION["assistant_id"] = aid
     return aid
