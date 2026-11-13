@@ -66,6 +66,16 @@ select, button, input {
 button { cursor: pointer; color: var(--yellow); border-color: var(--yellow); text-shadow: 0 0 6px var(--yellow); }
 button:hover { background: var(--yellow); color: #000; }
 
+/* ---- mission banner ---- */
+#mission-bar {
+  display: flex; align-items: baseline; gap: 12px; padding: 6px 16px;
+  background: #07090d; border-bottom: 1px solid rgba(255,59,92,.5); font-size: 12px;
+}
+#mission-title { color: var(--pink); letter-spacing: 2px; font-weight: normal; text-shadow: 0 0 6px var(--pink); white-space: nowrap; }
+#mission-obj { flex: 1; min-width: 0; color: #9adbe4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#turns-left { color: var(--yellow); letter-spacing: 2px; white-space: nowrap; }
+#turns-left.low { color: var(--pink); text-shadow: 0 0 8px var(--pink); }
+
 /* ---- layout: scene (left) + phone (right) ---- */
 #layout { flex: 1; display: flex; gap: 18px; min-height: 0; padding: 16px; }
 #scene-pane {
@@ -322,17 +332,27 @@ body.g3 #crt { animation: flicker 1.1s infinite; }
 #gameover {
   position: fixed; inset: 0; z-index: 100;
   background: rgba(2,0,2,.96);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; overflow-y: auto;
 }
 #gameover.hidden { display: none; }
-.go-inner { text-align: center; }
+.go-inner { text-align: center; max-width: 680px; padding: 20px; margin: auto; } /* margin:auto centers but stays scrollable */
+.go-mission { color: var(--teal); letter-spacing: 3px; margin-top: 12px; font-size: 14px; }
+.go-grade-row { display: flex; align-items: baseline; justify-content: center; gap: 22px; margin: 18px 0 6px; }
+.go-grade { font-size: 104px; line-height: 1; font-weight: bold; }
+.go-score { font-size: 26px; color: #cfd8e0; }
+.grade-S { color: #ffbf1f; text-shadow: 0 0 24px #ffbf1f, 0 0 60px rgba(255,170,0,.6); }
+.grade-A, .grade-B { color: var(--teal); text-shadow: 0 0 24px var(--teal); }
+.grade-C { color: var(--yellow); text-shadow: 0 0 20px var(--yellow); }
+.grade-D, .grade-F { color: var(--pink); text-shadow: 0 0 24px var(--pink); }
+.go-verdict { color: #cde; line-height: 1.5; margin: 14px 0; font-size: 14px; }
+.go-stats { color: #8ab; font-size: 12px; letter-spacing: 1px; white-space: pre-wrap; margin-bottom: 26px; }
 .go-title {
-  font-size: 58px; color: var(--pink); letter-spacing: 10px;
+  font-size: 46px; color: var(--pink); letter-spacing: 8px;
   text-shadow: 0 0 30px var(--pink);
   animation: textjitter .15s infinite;
 }
 #gameover .glitch::before, #gameover .glitch::after { opacity: .8; animation: gl .4s infinite steps(3); }
-.go-sub { color: var(--teal); margin: 18px 0 30px; font-size: 13px; }
+.go-title.win { color: var(--teal); text-shadow: 0 0 30px var(--teal); }
 #restart-btn { font-size: 16px; padding: 12px 24px; }
 
 ::-webkit-scrollbar { width: 6px; }

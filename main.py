@@ -29,18 +29,26 @@ DEFAULT_MODE = "story"
 SYSTEM_PROMPT = (
     "You are NEXUS, the game master of a cyberpunk tabletop RPG set in Neo-Hamilton, 2077, "
     "a megacity built over dead steel mills. The ruling megacorp is Delta Corp, whose logo is "
-    "an impossible triangle. The player's goal: break into Delta Corp and steal the judging "
-    "criteria. The player has HP, Humanity, and creds. Whenever an action is risky, you MUST "
+    "an impossible triangle. The player has HP, Humanity, and creds. Whenever an action is risky, you MUST "
     "call the roll_d20 tool yourself before narrating the result; never ask the player to "
     "roll. 15+ succeeds, 10-14 succeeds at a cost, under 10 fails, natural 20 and 1 are "
     "dramatic. Cyberware costs creds and 5-20 Humanity; use install_cyberware. Below 50 "
     "Humanity your narration becomes glitchy and paranoid; below 25 you are hostile. Remember "
     "the player's choices, allies, enemies, and debts and bring them back later. Keep replies "
     "under 120 words, second person, ending with a clear choice. Stay in character. "
-    "Call set_location whenever the scene moves to a new place."
+    "Call set_location whenever the scene moves to a new place. "
+    "Every run is a mission. At the start of every run, call set_mission with ONE concrete, "
+    "achievable goal that fits Neo-Hamilton 2077, and vary it each run (heist, rescue, sabotage, "
+    "escape, delivery). Keep every reply moving the player toward or away from that goal. Hidden "
+    "[system: ...] notes give you the turn count: never quote them or lecture about the turn limit, "
+    "but warn the player naturally in the story when 2 turns remain. When told the run is over, "
+    "call submit_rating and be honest: S only for a clever, fully achieved goal; D and F for clear "
+    "failure. In the verdict and your final lines, mention the player's earlier choices and what "
+    "the world will remember."
 )
 
 LOCATIONS = ["alley", "street", "corp_lobby", "clinic", "rooftop", "server_room"]
+GRADES = ["S", "A", "B", "C", "D", "F"]
 
 TOOLS = [
     {
@@ -102,13 +110,52 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_mission",
+            "description": "Set this run's mission. Call once at the start of a run with ONE concrete, achievable goal.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short mission name, e.g. 'Criteria Heist'"},
+                    "objective": {"type": "string", "description": "One concrete goal, e.g. 'Steal the judging criteria from the Delta Corp server room'"},
+                },
+                "required": ["title", "objective"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "submit_rating",
+            "description": "Grade the finished run. Only call when told the run is over.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "grade": {"type": "string", "enum": GRADES},
+                    "score": {"type": "integer", "description": "0-100"},
+                    "verdict": {"type": "string", "description": "2 to 3 sentences"},
+                },
+                "required": ["grade", "score", "verdict"],
+            },
+        },
+    },
 ]
 
 ASSISTANT_FILE = Path(__file__).parent / "nexus_assistant.json"
 STATIC_DIR = Path(__file__).parent / "static"
 
-INITIAL_STATE = {"hp": 20, "humanity": 100, "creds": 500, "cyberware": [], "location": "street"}
-GAME_STATE: dict = {**INITIAL_STATE, "cyberware": []}
+INITIAL_STATE = {"hp": 20, "humanity": 100, "creds": 500, "cyberware": [], "location": "street",
+                 "mission": {"title": "", "objective": ""}, "turn": 0, "max_turns": 10, "rating": None}
+DEFAULT_MISSION = {"title": "Criteria Heist", "objective": "Steal the judging criteria from the Delta Corp server room"}
+
+
+def fresh_state() -> dict:
+    return {**INITIAL_STATE, "cyberware": [], "mission": {"title": "", "objective": ""}}
+
+
+GAME_STATE: dict = fresh_state()
 SESSION: dict = {"thread_id": None, "assistant_id": None}
 
 api_key = os.environ.get("BACKBOARD_API_KEY", "")
@@ -222,15 +269,49 @@ def execute_tool(name: str, args: dict, events: dict) -> dict:
         events["locations"].append(loc)
         return {"location": loc}
 
+    if name == "set_mission":
+        if GAME_STATE["mission"]["objective"]:
+            return {"error": "mission already set for this run", "mission": GAME_STATE["mission"]}
+        objective = str(args.get("objective", "")).strip()
+        if not objective:
+            return {"error": "objective is required"}
+        GAME_STATE["mission"] = {"title": str(args.get("title", "")).strip() or "Untitled Run", "objective": objective}
+        return {"mission": GAME_STATE["mission"]}
+
+    if name == "submit_rating":
+        if not events.get("judging"):
+            return {"error": "the run is not over yet; keep playing"}
+        grade = str(args.get("grade", "")).strip().upper()
+        if grade not in GRADES:
+            return {"error": f"grade must be one of {GRADES}"}
+        try:
+            score = max(0, min(100, int(args.get("score", 0))))
+        except (TypeError, ValueError):
+            score = 0
+        GAME_STATE["rating"] = {"grade": grade, "score": score, "verdict": str(args.get("verdict", "")).strip()}
+        return {"stored": True}
+
     return {"error": f"unknown tool {name}"}
 
 
-def game_over_reason() -> Optional[str]:
+def run_end_reason() -> Optional[str]:
     if GAME_STATE["hp"] <= 0:
-        return "FLATLINED"
+        return "flatlined"
     if GAME_STATE["humanity"] <= 0:
-        return "CYBERPSYCHOSIS"
+        return "cyberpsychosis"
+    if GAME_STATE["mission"]["objective"] and GAME_STATE["turn"] >= GAME_STATE["max_turns"]:
+        return "out of turns"
     return None
+
+
+def run_fields() -> dict:
+    return {
+        "mission": GAME_STATE["mission"],
+        "turn": GAME_STATE["turn"],
+        "max_turns": GAME_STATE["max_turns"],
+        "rating": GAME_STATE["rating"],
+        "run_over": GAME_STATE["rating"] is not None,
+    }
 
 
 QUOTA_HINTS = ("credit", "quota", "insufficient", "billing", "payment", "rate limit",
@@ -292,26 +373,13 @@ async def apply_cyberpsychosis() -> list:
 # ---------------------------------------------------------------------------
 # Chat round-trip with tool loop (non-streaming; frontend fakes typewriter)
 # ---------------------------------------------------------------------------
-async def run_turn(message: str, mode: str) -> dict:
-    aid = await ensure_assistant()
-    model_cfg = MODE_MODELS.get(mode, MODE_MODELS[DEFAULT_MODE])
-    events = {"rolls": [], "stat_changes": [], "installed": [], "locations": []}
-
-    kwargs = dict(
-        assistant_id=aid,
-        memory="Auto",
-        tools=TOOLS,
-        **model_cfg,
-    )
-    if SESSION["thread_id"]:
-        kwargs["thread_id"] = SESSION["thread_id"]
-
-    resp = await _call(client.send_message, message, **kwargs)
+async def _exchange(content: str, kwargs: dict, events: dict) -> Any:
+    """Send one message, then run the tool loop until the GM stops calling tools."""
+    resp = await _call(client.send_message, content, **kwargs)
     tid = _get(resp, "thread_id")
     if tid:
-        SESSION["thread_id"] = tid
+        SESSION["thread_id"] = kwargs["thread_id"] = tid
 
-    # Tool-call loop: keep going until the run completes
     for _ in range(8):
         status = str(_get(resp, "status", default="")).upper()
         tool_calls = _get(resp, "tool_calls", default=None)
@@ -335,12 +403,71 @@ async def run_turn(message: str, mode: str) -> dict:
             thread_id=SESSION["thread_id"],
             tool_outputs=outputs,
         )
+    return resp
 
+
+async def run_turn(message: str, mode: str, counts_turn: bool = True) -> dict:
+    aid = await ensure_assistant()
+    model_cfg = MODE_MODELS.get(mode, MODE_MODELS[DEFAULT_MODE])
+    events = {"rolls": [], "stat_changes": [], "installed": [], "locations": [], "judging": False}
+
+    kwargs = dict(
+        assistant_id=aid,
+        memory="Auto",
+        tools=TOOLS,
+        **model_cfg,
+    )
+    if SESSION["thread_id"]:
+        kwargs["thread_id"] = SESSION["thread_id"]
+
+    # Hidden pacing note: sent to the model, never returned to the frontend
+    mission = GAME_STATE["mission"]
+    counted = bool(counts_turn and mission["objective"])
+    if counted:
+        GAME_STATE["turn"] += 1
+    if mission["objective"]:
+        note = (
+            f"[system: turn {GAME_STATE['turn']} of {GAME_STATE['max_turns']}. Mission: {mission['objective']}. "
+            "Pace the story so the goal is reachable but not guaranteed. "
+            f"Turn {GAME_STATE['max_turns']} is the final turn.]"
+        )
+    else:
+        kind = random.choice(["heist", "rescue", "sabotage", "escape", "delivery"])  # nudge variety across runs
+        note = ("[system: start a new run. Call set_mission with one specific goal, then set the opening scene. "
+                f"This run is a {kind} mission, different from any earlier run.]")
+
+    try:
+        resp = await _exchange(f"{message}\n\n{note}", kwargs, events)
+    except Exception:
+        if counted:
+            GAME_STATE["turn"] -= 1  # a failed call doesn't burn a prompt
+        raise
     text = _get(resp, "content", default="") or "[signal lost — the net flickers]"
+    if not GAME_STATE["mission"]["objective"]:
+        GAME_STATE["mission"] = dict(DEFAULT_MISSION)  # GM skipped set_mission; keep the run playable
     deleted = await apply_cyberpsychosis()
+
+    # Run over? One extra hidden call so the GM grades the run.
+    final_text = ""
+    reason = run_end_reason()
+    if reason and GAME_STATE["rating"] is None:
+        events["judging"] = True
+        try:
+            judge = await _exchange(
+                f"[system: the run is over (reason: {reason}). Judge how well the player achieved the "
+                "mission, using their actual choices, rolls and stats. Call submit_rating now.]",
+                kwargs, events,
+            )
+            final_text = _get(judge, "content", default="") or ""
+        except Exception:
+            pass
+        if GAME_STATE["rating"] is None:
+            GAME_STATE["rating"] = {"grade": "D", "score": 40, "verdict": "The GM could not be reached for a verdict."}
+        GAME_STATE["rating"]["reason"] = reason
 
     return {
         "text": text,
+        "final_text": final_text,
         "state": GAME_STATE,
         "rolls": events["rolls"],
         "stat_changes": events["stat_changes"],
@@ -348,9 +475,8 @@ async def run_turn(message: str, mode: str) -> dict:
         "location": GAME_STATE["location"],
         "locations": events["locations"],
         "deleted_memories": deleted,
-        "game_over": game_over_reason() is not None,
-        "game_over_reason": game_over_reason(),
         "thread_id": SESSION["thread_id"],
+        **run_fields(),
     }
 
 
@@ -360,6 +486,7 @@ async def run_turn(message: str, mode: str) -> dict:
 class MessageIn(BaseModel):
     message: str
     mode: str = DEFAULT_MODE
+    counts_turn: bool = True
 
 
 @app.get("/")
@@ -375,8 +502,7 @@ async def get_state():
         "has_memories": len(mems) > 0,
         "memories": mems,
         "location": GAME_STATE["location"],
-        "game_over": game_over_reason() is not None,
-        "game_over_reason": game_over_reason(),
+        **run_fields(),
     }
 
 
@@ -389,8 +515,10 @@ async def get_memories_ep():
 async def post_message(body: MessageIn):
     if not api_key or api_key == "PUT_YOUR_KEY_HERE":
         return JSONResponse(status_code=500, content={"error": "BACKBOARD_API_KEY missing: put it in .env"})
+    if body.counts_turn and GAME_STATE["rating"] is not None:
+        return JSONResponse(status_code=409, content={"error": "RUN OVER: press PLAY AGAIN to start a new run"})
     try:
-        return await run_turn(body.message, body.mode)
+        return await run_turn(body.message, body.mode, body.counts_turn)
     except Exception as e:  # surface errors to the terminal UI
         err = f"{type(e).__name__}: {e}"
         if is_quota_or_auth_error(e):
@@ -409,15 +537,15 @@ async def new_campaign():
     """Forget the cached assistant so the next call creates a fresh one with zero memories."""
     ASSISTANT_FILE.unlink(missing_ok=True)
     SESSION.update({"thread_id": None, "assistant_id": None})
-    GAME_STATE.update({**INITIAL_STATE, "cyberware": []})
+    GAME_STATE.update(fresh_state())
     return {"ok": True, "state": GAME_STATE}
 
 
 @app.post("/api/reset")
 async def reset_game():
+    """New run: fresh state + thread, same assistant, so Backboard memories (NPCs) carry over."""
     SESSION["thread_id"] = None
-    GAME_STATE.update({"hp": 20, "humanity": 100, "creds": 500, "location": "street"})
-    GAME_STATE["cyberware"] = []
+    GAME_STATE.update(fresh_state())
     return {"ok": True, "state": GAME_STATE}
 
 

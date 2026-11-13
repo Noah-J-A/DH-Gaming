@@ -53,6 +53,13 @@
   </div>
 </header>
 
+<div id="mission-bar">
+  <span class="label">MISSION:</span>
+  <b id="mission-title">awaiting briefing</b>
+  <span id="mission-obj"></span>
+  <span id="turns-left">PROMPTS LEFT: 10/10</span>
+</div>
+
 <main id="layout">
   <section id="scene-pane">
     <div id="scene-wrap">
@@ -110,9 +117,15 @@
 
 <div id="gameover" class="hidden">
   <div class="go-inner">
-    <div class="go-title glitch" data-text="CYBERPSYCHOSIS">CYBERPSYCHOSIS</div>
-    <div class="go-sub">humanity: 0.00% — subject no longer recognizes itself</div>
-    <button id="restart-btn">RE-INITIALIZE SUBJECT</button>
+    <div class="go-title glitch" data-text="MISSION COMPLETE">MISSION COMPLETE</div>
+    <div id="go-mission" class="go-mission"></div>
+    <div class="go-grade-row">
+      <div id="go-grade" class="go-grade">S</div>
+      <div id="go-score" class="go-score">0/100</div>
+    </div>
+    <p id="go-verdict" class="go-verdict"></p>
+    <div id="go-stats" class="go-stats"></div>
+    <button id="restart-btn">PLAY AGAIN</button>
   </div>
 </div>
 
