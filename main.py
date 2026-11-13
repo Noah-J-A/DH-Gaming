@@ -26,6 +26,8 @@ MODE_MODELS = {
 }
 DEFAULT_MODE = "story"
 
+MAX_TURNS = 5  # player prompts per run
+
 SYSTEM_PROMPT = (
     "You are NEXUS, the game master of a cyberpunk tabletop RPG set in Neo-Hamilton, 2077, "
     "a megacity built over dead steel mills. The ruling megacorp is Delta Corp, whose logo is "
@@ -35,11 +37,15 @@ SYSTEM_PROMPT = (
     "dramatic. Cyberware costs creds and 5-20 Humanity; use install_cyberware. Below 50 "
     "Humanity your narration becomes glitchy and paranoid; below 25 you are hostile. Remember "
     "the player's choices, allies, enemies, and debts and bring them back later. Keep replies "
-    "under 120 words, second person, ending with a clear choice. Stay in character. "
+    "under 120 words, second person. End every reply with a clear choice, EXCEPT on the final "
+    "turn, which must end the story. Stay in character. "
     "Call set_location whenever the scene moves to a new place. "
     "Every run is a mission. At the start of every run, call set_mission with ONE concrete, "
     "achievable goal that fits Neo-Hamilton 2077, and vary it each run (heist, rescue, sabotage, "
-    "escape, delivery). Keep every reply moving the player toward or away from that goal. Hidden "
+    f"escape, delivery). The mission must be completable or failable in {MAX_TURNS} player actions: "
+    "one objective, at most 2 locations, no multi-part quests. "
+    f"This run is exactly {MAX_TURNS} player prompts long. Treat it as a short story with a beginning, "
+    "middle and end, and never continue it after the final turn. Keep every reply moving the player toward or away from that goal. Hidden "
     "[system: ...] notes give you the turn count: never quote them or lecture about the turn limit, "
     "but warn the player naturally in the story when 1 turn remains. When told the run is over, "
     "call submit_rating and be honest: S only for a clever, fully achieved goal; D and F for clear "
@@ -147,7 +153,7 @@ ASSISTANT_FILE = Path(__file__).parent / "nexus_assistant.json"
 STATIC_DIR = Path(__file__).parent / "static"
 
 INITIAL_STATE = {"hp": 20, "humanity": 100, "creds": 500, "cyberware": [], "location": "street",
-                 "mission": {"title": "", "objective": ""}, "turn": 0, "max_turns": 5, "rating": None}
+                 "mission": {"title": "", "objective": ""}, "turn": 0, "max_turns": MAX_TURNS, "rating": None}
 DEFAULT_MISSION = {"title": "Criteria Heist", "objective": "Steal the judging criteria from the Delta Corp server room"}
 
 
@@ -214,6 +220,19 @@ async def ensure_assistant() -> str:
     ASSISTANT_FILE.write_text(json.dumps({"assistant_id": aid}))
     SESSION["assistant_id"] = aid
     return aid
+
+
+@app.on_event("startup")
+async def sync_assistant_prompt():
+    """Push the current SYSTEM_PROMPT/tools to the saved assistant: prompt changes apply, memories stay."""
+    if not ASSISTANT_FILE.exists() or not api_key:
+        return
+    try:
+        aid = await ensure_assistant()
+        await _call(client.update_assistant, aid, system_prompt=SYSTEM_PROMPT, tools=TOOLS)
+        print("[nexus] assistant prompt synced")
+    except Exception as e:
+        print(f"[nexus] assistant prompt sync skipped: {type(e).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -425,12 +444,20 @@ async def run_turn(message: str, mode: str, counts_turn: bool = True) -> dict:
     counted = bool(counts_turn and mission["objective"])
     if counted:
         GAME_STATE["turn"] += 1
-    if mission["objective"]:
-        note = (
-            f"[system: turn {GAME_STATE['turn']} of {GAME_STATE['max_turns']}. Mission: {mission['objective']}. "
-            "Pace the story so the goal is reachable but not guaranteed. "
-            f"Turn {GAME_STATE['max_turns']} is the final turn.]"
-        )
+    if mission["objective"]:  # phase-specific pacing: setup -> complication -> climax -> final
+        t, n = GAME_STATE["turn"], GAME_STATE["max_turns"]
+        if t >= n:
+            note = (f"[system: turn {n} of {n}. FINAL TURN. Resolve the mission NOW as a success, partial success "
+                    "or failure based on the player's actions, rolls and stats. Write a definitive ending in under "
+                    "80 words. Do NOT ask what the player does next, do NOT offer choices, do NOT set up a sequel.]")
+        elif t == n - 1:
+            note = (f"[system: turn {t} of {n}. CLIMAX. This is the decisive moment. The next prompt is the last. "
+                    "End with a choice that decides the outcome.]")
+        elif t <= 1:
+            note = f"[system: turn 1 of {n}. SETUP. Establish the stakes and the first obstacle. End with a choice.]"
+        else:
+            note = (f"[system: turn {t} of {n}. COMPLICATION. Raise the stakes or add a twist. "
+                    "Move toward the climax. End with a choice.]")
     else:
         kind = random.choice(["heist", "rescue", "sabotage", "escape", "delivery"])  # nudge variety across runs
         note = ("[system: start a new run. Call set_mission with one specific goal, then set the opening scene. "
@@ -454,8 +481,8 @@ async def run_turn(message: str, mode: str, counts_turn: bool = True) -> dict:
         events["judging"] = True
         try:
             judge = await _exchange(
-                f"[system: the run is over (reason: {reason}). Judge how well the player achieved the "
-                "mission, using their actual choices, rolls and stats. Call submit_rating now.]",
+                f"[system: the run is over (reason: {reason}). Do NOT continue the story. Only call "
+                "submit_rating, judging the player's actual choices, rolls and stats.]",
                 kwargs, events,
             )
             final_text = _get(judge, "content", default="") or ""
@@ -515,8 +542,8 @@ async def get_memories_ep():
 async def post_message(body: MessageIn):
     if not api_key or api_key == "PUT_YOUR_KEY_HERE":
         return JSONResponse(status_code=500, content={"error": "BACKBOARD_API_KEY missing: put it in .env"})
-    if body.counts_turn and GAME_STATE["rating"] is not None:
-        return JSONResponse(status_code=409, content={"error": "RUN OVER: press PLAY AGAIN to start a new run"})
+    if body.counts_turn and (GAME_STATE["rating"] is not None or run_end_reason()):
+        return JSONResponse(status_code=409, content={"error": "run over"})  # hard stop: no LLM call
     try:
         return await run_turn(body.message, body.mode, body.counts_turn)
     except Exception as e:  # surface errors to the terminal UI

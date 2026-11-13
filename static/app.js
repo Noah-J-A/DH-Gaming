@@ -510,6 +510,7 @@ function setBusy(on) {
   const lock = on || runOver;
   $("send-btn").disabled = lock;
   input.disabled = lock;
+  input.placeholder = runOver ? "" : "what will you do next?";
   if (!lock) input.focus();
 }
 
@@ -527,6 +528,11 @@ async function sendMessage(text, hidden = false, note = "") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, mode: $("mode").value, counts_turn: !hidden }),
     });
+    if (res.status === 409) {
+      const st = await (await fetch("/api/state")).json();
+      runOver = true; updateHUD(st.state); updateMission(st); showResults(st);
+      return;
+    }
     const data = await res.json();
 
     if (data.error) {
@@ -553,7 +559,6 @@ async function sendMessage(text, hidden = false, note = "") {
       before: i ? null : () => { memP = refreshMemories(deleted); },
     }));
     lines.push({ who: "gm", text: clean(data.text) });
-    if (data.final_text) lines.push({ who: "gm", text: clean(data.final_text) }); // GM's closing lines
 
     // reveal HUD + scene right after the dice
     const first = lines[rolls.length], firstBefore = first.before;
