@@ -1,0 +1,5 @@
+.venv/
+.env
+__pycache__/
+nexus_assistant.json
+*.txt_log

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS // Neo-Hamilton 2077</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="g0">
+<div id="crt"></div>
+
+<header id="hud">
+  <div class="hud-title glitch" data-text="NEXUS">NEXUS</div>
+  <div class="hud-stat">
+    <span class="label">HP</span>
+    <span id="hp-val" class="val">20</span>
+    <div class="bar"><div id="hp-bar" class="fill hp"></div></div>
+  </div>
+  <div class="hud-stat">
+    <span class="label">HUMANITY</span>
+    <span id="hum-val" class="val">100</span>
+    <div class="bar"><div id="hum-bar" class="fill hum"></div></div>
+  </div>
+  <div class="hud-stat">
+    <span class="label">CREDS</span>
+    <span id="creds-val" class="val creds">¤500</span>
+  </div>
+  <div class="hud-stat wide">
+    <span class="label">CYBERWARE</span>
+    <span id="cyber-list" class="val cyber">— none —</span>
+  </div>
+  <div class="hud-controls">
+    <select id="mode">
+      <option value="story">MODE: STORY</option>
+      <option value="combat">MODE: COMBAT</option>
+      <option value="netrun">MODE: NETRUN</option>
+    </select>
+    <button id="new-session">NEW SESSION</button>
+  </div>
+</header>
+
+<main id="layout">
+  <section id="chat-pane">
+    <div id="chat-log"></div>
+    <form id="input-row">
+      <span class="prompt-char">&gt;</span>
+      <input id="chat-input" type="text" autocomplete="off" placeholder="what do you do, choom?" />
+      <button type="submit" id="send-btn">TX</button>
+    </form>
+  </section>
+
+  <aside id="neural-pane">
+    <div class="pane-title">NEURAL LOG <span id="mem-count"></span></div>
+    <div id="memory-list"></div>
+  </aside>
+</main>
+
+<div id="d20-overlay" class="hidden">
+  <div id="d20">
+    <div id="d20-num">?</div>
+    <div id="d20-label"></div>
+  </div>
+</div>
+
+<div id="gameover" class="hidden">
+  <div class="go-inner">
+    <div class="go-title glitch" data-text="CYBERPSYCHOSIS">CYBERPSYCHOSIS</div>
+    <div class="go-sub">humanity: 0.00% — subject no longer recognizes itself</div>
+    <button id="restart-btn">RE-INITIALIZE SUBJECT</button>
+  </div>
+</div>
+
+<div id="flash"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

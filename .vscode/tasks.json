@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "nexus-sh",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File scripts/run_cmd.ps1",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "nexus-commit",
+      "type": "shell",
+      "command": "git add -A; git commit -m checkpoint; git log --oneline -3 | Out-File -Encoding ascii commit_log.txt",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "nexus-setup",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File _stage_ps/arrange.ps1",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "nexus-run",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -Command \"& .venv/Scripts/python.exe -m uvicorn main:app --port 8077\"",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true
+    }
+  ]
+}
