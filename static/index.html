@@ -58,6 +58,7 @@
     </select>
     <button id="new-session">NEW SESSION</button>
     <button id="new-campaign">NEW CAMPAIGN</button>
+    <button id="board-btn" title="Leaderboard">TOP 10</button>
   </div>
 </header>
 
@@ -169,6 +170,16 @@
     <div id="cb-timer" class="cb-timer">00:00:00</div>
     <div id="cb-today" class="cb-today"></div>
     <div id="cb-streak" class="cb-streak"></div>
+    <p id="cb-teaser" class="cb-teaser"></p>
+    <div id="cb-board" class="board-body"></div>
+  </div>
+</div>
+
+<div id="board" class="overlay hidden">
+  <div class="ov-inner">
+    <div class="ov-title">LEADERBOARD</div>
+    <div id="board-body" class="board-body"></div>
+    <button id="board-close">CLOSE</button>
   </div>
 </div>
 
@@ -180,6 +191,8 @@
       <div id="go-grade" class="go-grade">S</div>
       <div id="go-score" class="go-score">0/100</div>
     </div>
+    <button id="go-rank" class="go-rank hidden"></button>
+    <div id="go-board" class="board-body hidden"></div>
     <p id="go-verdict" class="go-verdict"></p>
     <div id="go-turns" class="go-turns"></div>
     <div id="go-summary" class="go-summary"></div>

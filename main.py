@@ -285,6 +285,18 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "set_teaser",
+            "description": "On the final turn only: one ominous line teasing tomorrow's run. Shown on the come-back screen.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "One sentence, under 25 words"}},
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "submit_rating",
             "description": "Judge the finished run. Only call when told the run is over. The server computes the grade.",
             "parameters": {
@@ -733,6 +745,12 @@ def execute_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
     if name in ("meet_npc", "update_npc"):
         return npc_tool(ctx, name, args, events)
 
+    if name == "set_teaser":
+        if not (events.get("judging") or st["turn"] >= st["max_turns"]):
+            return {"error": "only on the final turn"}
+        p["teaser"] = str(args.get("text", "")).strip().strip('"')[:160]
+        return {"stored": True}
+
     if name == "change_stat":
         stat = args.get("stat")
         if stat not in STAT_CLAMP:
@@ -854,6 +872,11 @@ def finish_run(ctx: Ctx, reason: str):
         p["humanity"] = 40
         p["creds"] //= 2
     earned = CREDS_BY_GRADE.get(r["grade"], 0)
+    streak = p["streak"] or 0
+    first_today = not sql("SELECT 1 FROM runs WHERE player_id=? AND day=? AND finished=1 AND id<>?",
+                          (p["id"], ctx.run["day"], ctx.run["id"]))
+    r["streak_bonus"] = (300 if streak >= 14 else 150 if streak >= 7 else 50 if streak >= 3 else 0) if first_today else 0
+    earned += r["streak_bonus"]
     p["creds"] += earned
     r["creds_earned"] = earned
     r["humanity_change"] = p["humanity"] - (st["humanity_start"] if st["humanity_start"] is not None else p["humanity"])
@@ -896,9 +919,22 @@ def run_fields(ctx: Ctx) -> dict:
     }
 
 
+def today_board() -> list:
+    """Best finished score per player today (SQLite returns the grade from the MAX row)."""
+    return sql("SELECT r.player_id AS pid, p.handle, MAX(r.score) AS score, r.grade FROM runs r "
+               "JOIN players p ON p.id = r.player_id WHERE r.day=? AND r.finished=1 AND r.score IS NOT NULL "
+               "GROUP BY r.player_id ORDER BY score DESC, MIN(r.id)", (day_str(),))
+
+
+def rank_today(pid: str) -> Optional[int]:
+    return next((i + 1 for i, row in enumerate(today_board()) if row["pid"] == pid), None)
+
+
 def status_fields(ctx: Ctx) -> dict:
     p = ctx.p
     return {
+        "rank_today": rank_today(p["id"]),
+        "teaser": p["teaser"] or "",
         "can_play": can_play(ctx),
         "active": ctx.active,
         "next_reset_seconds": next_reset_seconds(),
@@ -1017,8 +1053,10 @@ def opening_message(ctx: Ctx, kind: str) -> str:
         return ("A new session begins mid-mission. Open with a short 'Previously in Neo-Hamilton...' recap of "
                 "this mission so far, then set the scene and give me a choice.")
     if ctx.p["missions"]:
-        return ("A new day, a new run. Briefly nod to what you remember about me from earlier runs, then brief me "
-                "on today's mission and set the opening scene. End on my first objective.")
+        teaser = ctx.p["teaser"]
+        return ("A new day, a new run. Open with a two-sentence 'Previously...' recap of my earlier runs, built from "
+                "what you remember about me" + (f", then pick up yesterday's teaser: \"{teaser}\"" if teaser else "")
+                + ". Then brief me on today's mission and set the opening scene. End on my first objective.")
     return ("I am a new runner jacking in for the first time. Introduce the world of Neo-Hamilton 2077, brief me "
             "on today's mission and set the opening scene. End on my first objective.")
 
@@ -1040,7 +1078,8 @@ def pacing_note(ctx: Ctx) -> str:
         return (f"[system: turn {n} of {n}. FINAL TURN. Resolve the mission NOW as a success, partial success "
                 "or failure based on the tier rate_action returns and the run so far. Write a definitive ending in under "
                 f"80 words. Do NOT ask what the player does next, do NOT offer choices, do NOT set up a sequel. "
-                "After rate_action returns, call submit_rating with your verdict and the outcome, and never mention "
+                "After rate_action returns, call submit_rating with your verdict and the outcome and set_teaser with "
+                "one line that teases tomorrow, and never mention "
                 f"servers, scores or tools in the story. {sheet}]")
     if t == n - 1:
         return (f"[system: turn {t} of {n}. CLIMAX. This is the decisive moment. The next prompt is the last. "
@@ -1105,7 +1144,8 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
                 await _exchange(
                     ctx,
                     f"[system: the run is over (reason: {reason}). Do NOT continue the story. Only call "
-                    "submit_rating with a verdict on the player's actual choices and the mission outcome.]",
+                    "submit_rating with a verdict on the player's actual choices and the mission outcome, and "
+                    "set_teaser with one line teasing tomorrow.]",
                     kwargs, events,
                 )
             except Exception:
@@ -1244,6 +1284,21 @@ async def start_run(request: Request):
         sql("INSERT INTO runs(player_id, day, state, created_at) VALUES(?,?,?,?)",
             (pid, day_str(), json.dumps(st), datetime.now(timezone.utc).isoformat()))
     return {"ok": True}
+
+
+@app.get("/api/leaderboard")
+async def leaderboard(request: Request):
+    """Scores are server-computed only; handles only, no personal data."""
+    board = today_board()
+    best = sql("SELECT handle, best_score FROM players WHERE best_score > 0 ORDER BY best_score DESC, created_at LIMIT 10")
+    return {
+        "today": [{"rank": i + 1, "handle": r["handle"], "score": r["score"], "grade": r["grade"]} for i, r in enumerate(board[:10])],
+        "rank": next((i + 1 for i, r in enumerate(board) if r["pid"] == request.state.pid), None),
+        "players_today": len(board),
+        "all_time": [{"rank": i + 1, "handle": r["handle"], "score": r["best_score"]} for i, r in enumerate(best)],
+        "max": MAX_SCORE,
+        "next_reset_seconds": next_reset_seconds(),
+    }
 
 
 class BuyIn(BaseModel):

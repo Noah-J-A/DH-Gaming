@@ -684,8 +684,42 @@ function showResults(d) {
     `HP ${s.hp}  //  HUMANITY ${s.humanity}  //  CREDS \u00A4${s.creds}\n` +
     `CYBERWARE: ${(s.cyberware || []).join(", ") || "none"}`;
   $("restart-btn").textContent = d.can_play ? "PLAY AGAIN" : "CONTINUE";
+  const rank = d.rank_today ?? r.rank;
+  $("go-rank").textContent = rank ? `RANK #${rank} TODAY \u25BE` : "";
+  $("go-rank").classList.toggle("hidden", !rank);
+  $("go-board").classList.add("hidden");
   $("gameover").classList.remove("hidden");
 }
+
+// ---------- leaderboard (server-computed scores, handles only) ----------
+async function renderBoard(box) {
+  box.textContent = "loading...";
+  let b;
+  try { b = await (await fetch("/api/leaderboard")).json(); } catch (e) { box.textContent = "// board offline"; return null; }
+  box.textContent = "";
+  const me = (lastData.state || {}).handle;
+  const table = (title, rows, withGrade) => {
+    const h = document.createElement("div"); h.className = "board-title"; h.textContent = title; box.appendChild(h);
+    if (!rows.length) { const e = document.createElement("div"); e.className = "board-row"; e.textContent = "// no runs yet"; box.appendChild(e); }
+    for (const r of rows) {
+      const row = document.createElement("div"); row.className = "board-row" + (r.handle === me ? " me" : "");
+      const a = document.createElement("span"); a.textContent = `#${r.rank}`;
+      const n = document.createElement("span"); n.textContent = r.handle;
+      const sc = document.createElement("b"); sc.textContent = `${r.score}` + (withGrade ? ` ${r.grade}` : "");
+      if (withGrade) sc.className = "grade-" + r.grade;
+      row.append(a, n, sc); box.appendChild(row);
+    }
+  };
+  table(`TODAY${b.rank ? ` // YOU: #${b.rank} OF ${b.players_today}` : ""}`, b.today, true);
+  table("ALL-TIME BEST", b.all_time, false);
+  return b;
+}
+$("board-btn").addEventListener("click", () => { $("board").classList.remove("hidden"); renderBoard($("board-body")); });
+$("board-close").addEventListener("click", () => $("board").classList.add("hidden"));
+$("go-rank").addEventListener("click", () => {
+  const box = $("go-board"), open = box.classList.toggle("hidden") === false;
+  if (open) renderBoard(box);
+});
 
 // ---------- come back tomorrow ----------
 let cbTimer = null;
@@ -699,8 +733,13 @@ function showComeback(d) {
   clearInterval(cbTimer); tick(); cbTimer = setInterval(tick, 1000);
   const r = d.rating;
   $("cb-today").textContent = r && d.mission && d.mission.title
-    ? `TODAY: ${d.mission.title}\nGRADE ${r.grade}  //  SCORE ${r.score}  //  +\u00A4${r.creds_earned || 0}` : "";
-  $("cb-streak").textContent = `STREAK: ${d.streak || 0} DAY${d.streak === 1 ? "" : "S"}`;
+    ? `TODAY: ${d.mission.title}\nGRADE ${r.grade}  //  SCORE ${r.score}/${r.max || 600}  //  +\u00A4${r.creds_earned || 0}` +
+      (d.rank_today ? `  //  RANK #${d.rank_today}` : "") : "";
+  const st = d.streak || 0, next = [3, 7, 14].find((m) => m > st);
+  $("cb-streak").textContent = `STREAK: ${st} DAY${st === 1 ? "" : "S"}` +
+    (next ? `  //  ${next - st} MORE FOR A +\u00A4${{ 3: 50, 7: 150, 14: 300 }[next]} BONUS` : "  //  MAX BONUS +\u00A4300");
+  $("cb-teaser").textContent = d.teaser ? `\u201C${d.teaser}\u201D` : "";
+  renderBoard($("cb-board"));
   $("gameover").classList.add("hidden");
   $("comeback").classList.remove("hidden");
 }
