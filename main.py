@@ -20,9 +20,9 @@ load_dotenv()
 # EDIT ME: per-mode model routing (llm_provider + model_name sent per message)
 # ---------------------------------------------------------------------------
 MODE_MODELS = {
-    "story":  {"llm_provider": "openai", "model_name": "gpt-4o"},
+    "story":  {"llm_provider": "openai", "model_name": "gpt-4o-mini"},
     "combat": {"llm_provider": "openai", "model_name": "gpt-4o-mini"},
-    "netrun": {"llm_provider": "google", "model_name": "gemini-2.0-flash"},
+    "netrun": {"llm_provider": "openai", "model_name": "gpt-4o-mini"},
 }
 DEFAULT_MODE = "story"
 
@@ -30,8 +30,9 @@ SYSTEM_PROMPT = (
     "You are NEXUS, the game master of a cyberpunk tabletop RPG set in Neo-Hamilton, 2077, "
     "a megacity built over dead steel mills. The ruling megacorp is Delta Corp, whose logo is "
     "an impossible triangle. The player's goal: break into Delta Corp and steal the judging "
-    "criteria. The player has HP, Humanity, and creds. Whenever an action is risky, call "
-    "roll_d20; 15+ succeeds, 10-14 succeeds at a cost, under 10 fails, natural 20 and 1 are "
+    "criteria. The player has HP, Humanity, and creds. Whenever an action is risky, you MUST "
+    "call the roll_d20 tool yourself before narrating the result; never ask the player to "
+    "roll. 15+ succeeds, 10-14 succeeds at a cost, under 10 fails, natural 20 and 1 are "
     "dramatic. Cyberware costs creds and 5-20 Humanity; use install_cyberware. Below 50 "
     "Humanity your narration becomes glitchy and paranoid; below 25 you are hostile. Remember "
     "the player's choices, allies, enemies, and debts and bring them back later. Keep replies "
@@ -199,6 +200,24 @@ def execute_tool(name: str, args: dict, events: dict) -> dict:
     return {"error": f"unknown tool {name}"}
 
 
+def game_over_reason() -> Optional[str]:
+    if GAME_STATE["hp"] <= 0:
+        return "FLATLINED"
+    if GAME_STATE["humanity"] <= 0:
+        return "CYBERPSYCHOSIS"
+    return None
+
+
+QUOTA_HINTS = ("credit", "quota", "insufficient", "billing", "payment", "rate limit",
+               "api key", "unauthorized", "forbidden", "authentication")
+
+
+def is_quota_or_auth_error(e: Exception) -> bool:
+    if getattr(e, "status_code", None) in (401, 402, 403, 429):
+        return True
+    return any(h in str(e).lower() for h in QUOTA_HINTS)
+
+
 # ---------------------------------------------------------------------------
 # Memory helpers
 # ---------------------------------------------------------------------------
@@ -216,8 +235,8 @@ def _normalize_memories(resp: Any) -> list:
 
 
 async def list_memories() -> list:
-    aid = await ensure_assistant()
     try:
+        aid = await ensure_assistant()
         resp = await _call(client.get_memories, aid)
     except Exception:
         return []
@@ -302,7 +321,8 @@ async def run_turn(message: str, mode: str) -> dict:
         "stat_changes": events["stat_changes"],
         "installed": events["installed"],
         "deleted_memories": deleted,
-        "game_over": GAME_STATE["humanity"] <= 0,
+        "game_over": game_over_reason() is not None,
+        "game_over_reason": game_over_reason(),
         "thread_id": SESSION["thread_id"],
     }
 
@@ -327,7 +347,8 @@ async def get_state():
         "state": GAME_STATE,
         "has_memories": len(mems) > 0,
         "memories": mems,
-        "game_over": GAME_STATE["humanity"] <= 0,
+        "game_over": game_over_reason() is not None,
+        "game_over_reason": game_over_reason(),
     }
 
 
@@ -343,12 +364,24 @@ async def post_message(body: MessageIn):
     try:
         return await run_turn(body.message, body.mode)
     except Exception as e:  # surface errors to the terminal UI
-        return JSONResponse(status_code=500, content={"error": f"{type(e).__name__}: {e}"})
+        err = f"{type(e).__name__}: {e}"
+        if is_quota_or_auth_error(e):
+            err = "NETWORK QUOTA EXCEEDED: " + err
+        return JSONResponse(status_code=500, content={"error": err})
 
 
 @app.post("/api/new_session")
 async def new_session():
     SESSION["thread_id"] = None
+    return {"ok": True, "state": GAME_STATE}
+
+
+@app.post("/api/new_campaign")
+async def new_campaign():
+    """Forget the cached assistant so the next call creates a fresh one with zero memories."""
+    ASSISTANT_FILE.unlink(missing_ok=True)
+    SESSION.update({"thread_id": None, "assistant_id": None})
+    GAME_STATE.update({**INITIAL_STATE, "cyberware": []})
     return {"ok": True, "state": GAME_STATE}
 
 

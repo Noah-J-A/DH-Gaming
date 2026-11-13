@@ -6,15 +6,11 @@ memory, tool calling, per-message model routing).
 
 ## Run it
 
-```powershell
-# 1. one-time setup (venv + deps + file layout)
-powershell -ExecutionPolicy Bypass -File _stage_ps/arrange.ps1   # or: pip install -r requirements.txt
+Copy `.env.example` to `.env` and set `BACKBOARD_API_KEY`, then:
 
-# 2. put your key in .env
-#    BACKBOARD_API_KEY=bb_...
-
-# 3. start
-.venv\Scripts\python.exe -m uvicorn main:app --port 8077
+```bash
+pip install -r requirements.txt
+uvicorn main:app --port 8077
 ```
 
 Open http://localhost:8077

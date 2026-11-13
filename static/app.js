@@ -137,6 +137,17 @@ function showRoll(value) {
   });
 }
 
+// ---------- game over (same screen, two causes) ----------
+function showGameOver(reason) {
+  const flat = reason === "FLATLINED";
+  const title = document.querySelector("#gameover .go-title");
+  title.textContent = title.dataset.text = flat ? "FLATLINED" : "CYBERPSYCHOSIS";
+  document.querySelector("#gameover .go-sub").textContent = flat
+    ? "hp: 0 — vital signs terminated"
+    : "humanity: 0.00% — subject no longer recognizes itself";
+  $("gameover").classList.remove("hidden");
+}
+
 // ---------- core turn ----------
 async function sendMessage(text, hidden = false) {
   if (busy) return;
@@ -169,7 +180,7 @@ async function sendMessage(text, hidden = false) {
     if ((data.deleted_memories || []).length) {
       addMsg("sys", "!! NEURAL DEGRADATION: " + data.deleted_memories.length + " engram(s) lost");
     }
-    if (data.game_over) $("gameover").classList.remove("hidden");
+    if (data.game_over) showGameOver(data.game_over_reason);
   } catch (e) {
     pending.remove();
     addMsg("sys", "!! uplink failed: " + e.message);
@@ -187,7 +198,7 @@ async function boot(recapOnly = false) {
     const data = await res.json();
     updateHUD(data.state);
     renderMemories(data.memories || []);
-    if (data.game_over) { $("gameover").classList.remove("hidden"); return; }
+    if (data.game_over) { showGameOver(data.game_over_reason); return; }
     if (data.has_memories || recapOnly) {
       addMsg("sys", "// resuming neural link \u2014 engrams detected");
       sendMessage(
@@ -221,6 +232,15 @@ $("new-session").addEventListener("click", async () => {
   chatLog.innerHTML = "";
   addMsg("sys", "// SESSION TERMINATED \u2014 new thread spun up, same NEXUS");
   boot(true);
+});
+
+$("new-campaign").addEventListener("click", async () => {
+  if (busy || !confirm("Start a new campaign? NEXUS will forget everything.")) return;
+  await fetch("/api/new_campaign", { method: "POST" });
+  $("gameover").classList.add("hidden");
+  chatLog.innerHTML = "";
+  addMsg("sys", "// CAMPAIGN WIPED — fresh NEXUS instance, zero engrams");
+  boot();
 });
 
 $("restart-btn").addEventListener("click", async () => {
