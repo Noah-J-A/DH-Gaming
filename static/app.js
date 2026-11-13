@@ -665,6 +665,10 @@ async function sendMessage(text, kind = "turn", note = "") {
     for (const it of data.items_gained || []) lines.push(sys(`+ ITEM: ${it.name}`));
     for (const n of data.items_used || []) lines.push(sys(`- USED: ${n}`));
     for (const n of data.items_denied || []) lines.push(sys(`!! NOT IN YOUR KIT: ${n}`));
+    for (const c of data.npc_changes || []) {
+      lines.push(sys(c.event === "met" ? `CONTACT: ${c.name}, ${c.role}`
+        : `${c.name} ${signed(c.delta)} (now ${signed(c.relationship)}): ${c.note}`));
+    }
     for (const name of installed) {
       lines.push(sys(`Installed: ${name}.` + (installed.length === 1 && implantCost > 0 ? ` Humanity -${implantCost}` : "")));
     }

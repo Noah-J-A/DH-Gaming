@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from backboard import BackboardClient
 from missions import MARKET, MISSIONS, STARTER_ITEMS
+from npcs import NPCS
 
 load_dotenv()
 
@@ -77,6 +78,16 @@ SYSTEM_PROMPT = (
     "use items in their inventory or cyberware, listed in the hidden note. Call use_item whenever they use an item; "
     "if it fails, or they claim gear they do not have, deny it in character and rate fit 0-2. Only call grant_item "
     "for something they truly found or earned (at most 2 per run). "
+    "WORLD: every scene gets one concrete sensory detail (the cold, harbour fog, mill soot, the hum of the bridge) "
+    "and an NPC who wants something. NPCs are specific and odd, never generic quest-givers. Call meet_npc the first "
+    "time an NPC appears this run, and update_npc when the player helps, hurts, lies to or impresses them. Greet a "
+    "returning NPC with a specific callback to their last note. Use original names only, no real brands. "
+    "TONE: Adult, gritty, darkly funny. Strong language, swearing, crude and vulgar humour, drugs, violence and bleak "
+    "themes are allowed and in character; NPCs swear naturally. Death and despair can appear as fiction. Do not write "
+    "explicit sexual content, sexual content involving minors, slurs against real groups, or real-world instructions "
+    "for crimes, weapons or drugs. Never describe methods of self-harm or present it as a solution. If a player's text "
+    "reads like real personal distress rather than a game action, NEXUS briefly drops character with one caring line "
+    "mentioning 9-8-8 (Canada's crisis line), then returns to the game. "
     f"This run is exactly {MAX_TURNS} player prompts long. Treat it as a short story with a beginning, "
     "middle and end, and never continue it after the final turn. Keep every reply moving the player toward or away from that goal. Hidden "
     "[system: ...] notes give you the turn count and the player's sheet: never quote them or lecture about the turn limit, "
@@ -142,6 +153,7 @@ TOOLS = [
                     "stat": {"type": "string", "enum": STAT_NAMES + ["none"], "description": "Class stat that clearly applies"},
                     "followed_objective": {"type": "boolean", "description": "Did the prompt pursue this turn's objective?"},
                     "met_constraint": {"type": "boolean", "description": "Did it respect this turn's constraint, if any?"},
+                    "distress": {"type": "boolean", "description": "true ONLY if the text reads like real personal distress, not a game action"},
                 },
                 "required": ["specificity", "creativity", "fit", "quote", "breakdown"],
             },
@@ -240,6 +252,39 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "meet_npc",
+            "description": "Introduce an NPC (or re-meet a returning one). Call the first time they appear this run.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "role": {"type": "string", "description": "e.g. 'fog smuggler at Harbour Six'"},
+                    "quirk": {"type": "string", "description": "One odd, specific habit"},
+                    "attitude": {"type": "string", "enum": ["hostile", "wary", "neutral", "friendly", "loyal"]},
+                },
+                "required": ["name", "role", "quirk", "attitude"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_npc",
+            "description": "Change how an NPC feels about the player after something happens between them.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "relationship_delta": {"type": "integer", "description": "-2 to 2"},
+                    "note": {"type": "string", "description": "What happened, in a few words, for next time"},
+                },
+                "required": ["name", "relationship_delta", "note"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "submit_rating",
             "description": "Judge the finished run. Only call when told the run is over. The server computes the grade.",
             "parameters": {
@@ -263,7 +308,7 @@ def new_run_state() -> dict:
     return {"hp": START_HP, "location": "street", "mission": {"title": "", "objective": ""},
             "turn": 0, "max_turns": MAX_TURNS, "rating": None, "opened": False, "humanity_start": None,
             "turns": [], "combo": 0, "creds_gained": 0, "beat": {"text": "", "constraint": ""}, "seed": None,
-            "grants": 0}
+            "grants": 0, "npc_log": []}
 
 
 api_key = os.environ.get("BACKBOARD_API_KEY", "")
@@ -536,6 +581,10 @@ def rate_turn(ctx: Ctx, args: dict, events: dict) -> dict:
         return {"error": "no player action to rate on this message"}
     if events.get("turn_rating"):
         return {"error": "already rated this turn", "tier": events["turn_rating"]["tier"]}
+    if args.get("distress") is True:  # real distress: not scored, and the prompt is refunded
+        events["distress"] = True
+        return {"tier": "NONE", "narrate": "Not scored. Drop character with one caring line mentioning 9-8-8 "
+                "(Canada's crisis line), then gently return to the game."}
     words = len(re.findall(r"[A-Za-z0-9']+", text))
     cap = 2 if words <= 3 else 4 if words <= 6 else 7 if words <= 10 else 10  # a 2-word prompt can't be specific
     spec = min(_clamp(args.get("specificity", 3), 0, 10), cap)
@@ -602,6 +651,72 @@ def find_item(p: dict, name: str) -> Optional[dict]:
         next((i for i in p["inventory"] if key and (key in i["name"].lower() or i["name"].lower() in key)), None)
 
 
+ATTITUDE = {"hostile": -2, "wary": -1, "neutral": 0, "friendly": 1, "loyal": 2}
+MAX_NPCS = 12
+
+
+def find_npc(p: dict, name: str) -> Optional[dict]:
+    key = name.strip().lower()
+    return next((n for n in p["npcs"] if n["name"].lower() == key), None) if key else None
+
+
+def npc_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
+    p, st = ctx.p, ctx.st
+    nname = str(args.get("name", "")).strip()[:32]
+    if not nname:
+        return {"error": "name is required"}
+    npc = find_npc(p, nname)
+    if name == "meet_npc":
+        if npc:  # returning NPC: hand the GM its memory for a callback
+            npc["last_day"] = day_str()
+            return {"returning": True, "npc": npc, "hint": "Greet them with a callback to their note."}
+        seed = next((s for s in NPCS if s["name"].lower() == nname.lower()), {})
+        npc = {"name": seed.get("name", nname), "role": str(args.get("role") or seed.get("role", ""))[:60],
+               "quirk": str(args.get("quirk") or seed.get("tic", ""))[:80],
+               "relationship": ATTITUDE.get(str(args.get("attitude", "neutral")).lower(), 0),
+               "note": "", "met": day_str(), "last_day": day_str()}
+        p["npcs"] = (p["npcs"] + [npc])[-MAX_NPCS:]
+        change = {"name": npc["name"], "event": "met", "role": npc["role"], "relationship": npc["relationship"]}
+        st["npc_log"].append(change)
+        events["npc_changes"].append(change)
+        return {"met": npc}
+    if not npc:
+        return {"error": f"meet_npc first: {nname} is not in the roster"}
+    delta = _clamp(args.get("relationship_delta"), -2, 2)
+    npc["relationship"] = max(-5, min(5, npc["relationship"] + delta))
+    npc["note"] = str(args.get("note", "")).strip()[:100] or npc["note"]
+    npc["last_day"] = day_str()
+    change = {"name": npc["name"], "event": "updated", "delta": delta, "relationship": npc["relationship"], "note": npc["note"]}
+    st["npc_log"].append(change)
+    events["npc_changes"].append(change)
+    return {"npc": npc}
+
+
+def cast_note(ctx: Ctx) -> str:
+    """1-2 NPCs per run: a returning one from the roster if any, plus a seed NPC this runner hasn't met."""
+    roster = ctx.p["npcs"]
+    parts = []
+    if roster:
+        back = max(roster, key=lambda n: (n.get("last_day", ""), abs(n["relationship"])))
+        parts.append(f"RETURNING: {back['name']} ({back['role']}, relationship {back['relationship']:+d}, "
+                     f"last note: {back['note'] or 'first meeting'}); greet them with a specific callback.")
+    met = {n["name"].lower() for n in roster}
+    fresh = [n for n in NPCS if n["name"].lower() not in met]
+    if fresh:
+        n = random.Random(day_str() + ctx.p["id"]).choice(fresh)
+        parts.append(f"NEW: {n['name']}, {n['role']}; tic: {n['tic']}; wants {n['want']}; fears {n['fear']}; "
+                     f"secret (reveal only if earned): {n['secret']}.")
+    return "Today's cast: " + " ".join(parts) if parts else ""
+
+
+def roster_note(ctx: Ctx) -> str:
+    roster = sorted(ctx.p["npcs"], key=lambda n: n.get("last_day", ""), reverse=True)[:6]
+    if not roster:
+        return ""
+    return " Known NPCs: " + "; ".join(f"{n['name']} ({n['role']}, {n['relationship']:+d}"
+                                       + (f": {n['note']}" if n["note"] else "") + ")" for n in roster) + "."
+
+
 def daily_mission_index() -> int:
     return toronto_now().timetuple().tm_yday % len(MISSIONS)
 
@@ -614,6 +729,9 @@ def execute_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
     st, p = ctx.st, ctx.p
     if name == "rate_action":
         return rate_turn(ctx, args, events)
+
+    if name in ("meet_npc", "update_npc"):
+        return npc_tool(ctx, name, args, events)
 
     if name == "change_stat":
         stat = args.get("stat")
@@ -727,7 +845,7 @@ def finish_run(ctx: Ctx, reason: str):
     total = sum(t["turn_score"] for t in st["turns"]) + MISSION_BONUS[outcome]
     pct = round(100 * total / MAX_SCORE)
     r.update(outcome=outcome, mission_bonus=MISSION_BONUS[outcome], score=total, max=MAX_SCORE, pct=pct,
-             grade=grade_for(pct), turns=st["turns"])
+             grade=grade_for(pct), turns=st["turns"], npcs=st["npc_log"])
     if reason == "cyberpsychosis":  # chrome burns out: lose all cyberware, reset humanity, half the creds
         p["cyberware"] = []
         p["humanity"] = 40
@@ -886,7 +1004,8 @@ def player_sheet(ctx: Ctx) -> str:
     return (f"Player: {p['handle']}, class {CLASSES.get(p['class'], {}).get('name', '?')} ({stats}). "
             f"HP {ctx.st['hp']}, Humanity {p['humanity']}, creds {p['creds']}, "
             f"cyberware: {', '.join(p['cyberware']) or 'none'}. Inventory, the ONLY items they can use: "
-            f"{'; '.join(i['name'] + ' (' + i['description'] + ')' for i in p['inventory']) or 'empty'}.")
+            f"{'; '.join(i['name'] + ' (' + i['description'] + ')' for i in p['inventory']) or 'empty'}."
+            + roster_note(ctx))
 
 
 def opening_message(ctx: Ctx, kind: str) -> str:
@@ -913,7 +1032,7 @@ def pacing_note(ctx: Ctx) -> str:
         return (f"[system: today's mission, the same seed for every runner: {seed['title']}: {seed['objective']}. "
                 f"Locations: {' then '.join(seed['locations'])}. Beats: {beats} Twist, reveal around prompt 3: "
                 f"{seed['twist']} Open in {seed['locations'][0]}, set the scene, then call set_objective for "
-                f"prompt 1. {sheet}]")
+                f"prompt 1. {cast_note(ctx)} {sheet}]")
     if t >= n:
         return (f"[system: turn {n} of {n}. FINAL TURN. Resolve the mission NOW as a success, partial success "
                 "or failure based on the tier rate_action returns and the run so far. Write a definitive ending in under "
@@ -933,7 +1052,8 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
     aid = await ensure_assistant(ctx)
     model_cfg = MODE_MODELS.get(mode, MODE_MODELS[DEFAULT_MODE])
     events = {"rolls": [], "stat_changes": [], "installed": [], "locations": [], "judging": False,
-              "player_text": "", "turn_rating": None, "items_gained": [], "items_used": [], "items_denied": []}
+              "player_text": "", "turn_rating": None, "items_gained": [], "items_used": [], "items_denied": [],
+              "npc_changes": []}
     kwargs = dict(assistant_id=aid, memory="Auto", tools=TOOLS, **model_cfg)
     if ctx.run["thread_id"]:
         kwargs["thread_id"] = ctx.run["thread_id"]
@@ -949,15 +1069,19 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
     if counted:
         named = [i["name"] for i in ctx.p["inventory"] if i["name"].lower() in message.lower()]
         note = ("[system: the text above is the player's action. First call rate_action on it, then narrate exactly "
-                "the tier it returns." + (f" They are using {', '.join(named)}: call use_item for each." if named else "")
+                "the tier it returns. If it changed how an NPC feels, call update_npc with a short note."
+                + (f" They are using {', '.join(named)}: call use_item for each." if named else "")
                 + "] " + note)
     resp = await _exchange(ctx, f"{message}\n\n{note}", kwargs, events)  # on error nothing is saved
     if counted:
         mark_started(ctx)
-        if not events["turn_rating"]:  # GM skipped rate_action: neutral rating so the turn still scores
-            rate_turn(ctx, {"specificity": 5, "creativity": 5, "fit": 5, "_fallback": True,
-                            "breakdown": [{"label": "GM signal lost, neutral rating", "delta": 0}]}, events)
-        events["rolls"] = [events["turn_rating"]["d20"]]
+        if events.get("distress"):
+            st["turn"] -= 1  # refunded: a person, not a move
+        else:
+            if not events["turn_rating"]:  # GM skipped rate_action: neutral rating so the turn still scores
+                rate_turn(ctx, {"specificity": 5, "creativity": 5, "fit": 5, "_fallback": True,
+                                "breakdown": [{"label": "GM signal lost, neutral rating", "delta": 0}]}, events)
+            events["rolls"] = [events["turn_rating"]["d20"]]
     st["opened"] = True
     text = _get(resp, "content", default="") or "[signal lost — the net flickers]"
     if events["items_denied"] and events["turn_rating"]:  # claimed gear they don't own: punished server-side
@@ -1001,6 +1125,7 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
         "items_gained": events["items_gained"],
         "items_used": events["items_used"],
         "items_denied": events["items_denied"],
+        "npc_changes": events["npc_changes"],
         **run_fields(ctx),
         **status_fields(ctx),
     }
