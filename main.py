@@ -655,7 +655,37 @@ async def ensure_assistant(ctx: Ctx) -> str:
     p["assistant_id"] = str(_get(assistant, "assistant_id", "id"))
     p["prompt_ver"] = prompt_version()
     save_player(p)
+    await remember(ctx, f"The player's runner is {p['handle']}, a {str(p['class'] or '').upper()}, "
+                        f"who first jacked into Neo-Hamilton on {day_str()}.")
     return p["assistant_id"]
+
+
+async def remember(ctx: Ctx, text: str):
+    """Write a memory ourselves: Backboard's auto-memory keeps facts about people, not game moves."""
+    try:
+        await _call(client.add_memory, ctx.p["assistant_id"], text[:900])
+    except Exception as e:
+        print(f"[nexus] memory write skipped: {type(e).__name__}")
+
+
+def run_memory(ctx: Ctx) -> str:
+    """One recap per finished run, so tomorrow's 'Previously...' and the Memory tab have something real."""
+    st, r = ctx.st, ctx.st["rating"]
+    turns = [t for t in st["turns"] if t.get("quote") and t["quote"] != "(froze)"]
+    best = max(turns, key=lambda t: t["turn_score"]) if turns else None
+    worst = min(turns, key=lambda t: t["turn_score"]) if len(turns) > 1 else None
+    met = sorted({c["name"] for c in st["npc_log"] if c.get("name")})
+    out = [f"{ctx.run['day']}: {ctx.p['handle']} ran \"{st['mission']['title']}\", outcome {r.get('outcome')}, "
+           f"grade {r.get('grade')} ({r.get('score')}/{MAX_SCORE})."]
+    if best:
+        out.append(f"Best move: \"{best['quote']}\" ({best['tier']}).")
+    if worst and worst is not best:
+        out.append(f"Worst move: \"{worst['quote']}\" ({worst['tier']}).")
+    if met:
+        out.append("Dealt with " + ", ".join(met) + ".")
+    if r.get("verdict"):
+        out.append("GM verdict: " + r["verdict"][:300])
+    return " ".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -1272,6 +1302,7 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
         if st["rating"] is None:
             st["rating"] = {"verdict": "The GM could not be reached for a verdict.", "outcome": None}
         finish_run(ctx, reason)
+        await remember(ctx, run_memory(ctx))
     ctx.save()
 
     return {
