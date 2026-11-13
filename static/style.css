@@ -209,6 +209,38 @@ body.g3 #dialogue:not(.sys) #dlg-text { text-shadow: 3px 0 var(--pink), -3px 0 v
   #phone { width: 100%; height: 75vh; }
 }
 
+/* ---- phones: one screen, no page scroll; dialogue under the scene, input always visible ---- */
+@media (max-width: 600px) {
+  body { height: 100vh; height: 100dvh; overflow: hidden; }
+  #hud { gap: 4px 10px; padding: 6px 10px; }
+  .hud-title { font-size: 16px; letter-spacing: 3px; }
+  .hud-stat { gap: 4px; }
+  .label { font-size: 9px; letter-spacing: 1px; }
+  .val { font-size: 13px; }
+  .bar { width: 34px; height: 8px; }
+  .hud-stat:has(#creds-val) .label { display: none; }
+  .hud-stat.wide { order: 5; flex: 1 1 100%; min-width: 0; }
+  #cyber-list { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hud-controls { order: 6; flex: 1 1 100%; margin-left: 0; gap: 6px; }
+  .hud-controls > * { flex: 1; min-width: 0; font-size: 10px; padding: 6px 4px; }
+  #mission-bar { flex-wrap: wrap; gap: 2px 8px; padding: 5px 10px; font-size: 11px; }
+  #mission-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #mission-obj {
+    order: 3; flex: 1 1 100%; white-space: normal;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  #layout { flex: 1; min-height: 0; padding: 8px 10px; gap: 8px; }
+  #scene-wrap { aspect-ratio: auto; outline: none; box-shadow: none; }
+  #scene { height: auto; aspect-ratio: 16 / 9; outline: 2px solid var(--teal); }
+  #wipe { bottom: auto; aspect-ratio: 16 / 9; }
+  #dialogue { position: relative; left: 0; right: 0; bottom: 0; margin: 16px 5px 5px; padding: 11px 36px 11px 14px; font-size: 13px; }
+  #phone { flex: 1; height: auto; min-height: 0; border-width: 1px; border-radius: 8px; padding: 6px 8px 8px; box-shadow: none; }
+  .phone-notch, .phone-status, .phone-header { display: none; }
+  #input-row #chat-input { font-size: 16px; } /* under 16px, iOS zooms the page on focus */
+  .go-title { font-size: 26px; letter-spacing: 3px; }
+  .go-grade { font-size: 80px; }
+}
+
 .msg { margin-bottom: 14px; max-width: 95%; white-space: pre-wrap; line-height: 1.45; }
 .msg.user {
   align-self: flex-end; max-width: 85%; margin-bottom: 8px;
