@@ -19,7 +19,7 @@ powershell -ExecutionPolicy Bypass -File _stage_ps/arrange.ps1   # or: pip insta
 
 Open http://localhost:8077
 
-## How Backboard is used (the judged part)
+## How Backboard is used
 
 | Feature | Where |
 |---|---|
