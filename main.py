@@ -371,7 +371,8 @@ def next_reset_seconds() -> int:
 # which Supabase's public API does not expose), otherwise a local SQLite file. Every query
 # goes through sql() and is written once, with ? placeholders, in SQL both databases accept.
 # ---------------------------------------------------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+# tolerate a pasted .env line ("DATABASE_URL=postgresql://...") or quotes around the value
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip().removeprefix("DATABASE_URL=").strip().strip("\"'")
 DB_PATH = os.environ.get("NEXUS_DB") or (
     "/tmp/nexus.db" if os.environ.get("VERCEL") else str(Path(__file__).parent / "nexus.db"))
 JSON_FIELDS = {"stats": "{}", "cyberware": "[]", "inventory": "[]", "npcs": "[]", "missions": "[]"}
