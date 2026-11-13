@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+.venv
+__pycache__
+nexus_assistant.json
+.vscode

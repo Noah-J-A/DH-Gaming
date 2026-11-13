@@ -1,4 +1,8 @@
 """NEXUS — cyberpunk tabletop RPG with a Backboard-powered GM that remembers everything."""
+import asyncio
+import base64
+import hashlib
+import hmac
 import inspect
 import json
 import os
@@ -7,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -209,10 +213,14 @@ def _get(obj: Any, *names, default=None):
 # ---------------------------------------------------------------------------
 # Assistant bootstrap (created once, id cached on disk)
 # ---------------------------------------------------------------------------
-async def ensure_assistant() -> str:
-    if SESSION["assistant_id"]:
+async def ensure_assistant(fresh: bool = False) -> str:
+    """Assistant id: the player's cookie, then NEXUS_ASSISTANT_ID (Vercel), then the local file, else create one."""
+    if SESSION["assistant_id"] and not fresh:
         return SESSION["assistant_id"]
-    if ASSISTANT_FILE.exists():
+    if not fresh and os.environ.get("NEXUS_ASSISTANT_ID"):
+        SESSION["assistant_id"] = os.environ["NEXUS_ASSISTANT_ID"]
+        return SESSION["assistant_id"]
+    if not fresh and ASSISTANT_FILE.exists():
         data = json.loads(ASSISTANT_FILE.read_text())
         SESSION["assistant_id"] = str(data["assistant_id"])
         return SESSION["assistant_id"]
@@ -223,7 +231,10 @@ async def ensure_assistant() -> str:
         tools=TOOLS,
     )
     aid = str(_get(assistant, "assistant_id", "id"))
-    ASSISTANT_FILE.write_text(json.dumps({"assistant_id": aid}))
+    try:
+        ASSISTANT_FILE.write_text(json.dumps({"assistant_id": aid}))
+    except OSError:
+        pass  # read-only filesystem (serverless): the id lives in the player's cookie
     SESSION["assistant_id"] = aid
     return aid
 
@@ -231,7 +242,7 @@ async def ensure_assistant() -> str:
 @app.on_event("startup")
 async def sync_assistant_prompt():
     """Push the current SYSTEM_PROMPT/tools to the saved assistant: prompt changes apply, memories stay."""
-    if not ASSISTANT_FILE.exists() or not api_key:
+    if not api_key or not (os.environ.get("NEXUS_ASSISTANT_ID") or ASSISTANT_FILE.exists()):
         return
     try:
         aid = await ensure_assistant()
@@ -516,6 +527,51 @@ async def run_turn(message: str, mode: str, counts_turn: bool = True) -> dict:
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
+# Per-player run state lives in a signed cookie, so it survives serverless restarts (Vercel)
+# and every player gets their own run. GAME_STATE/SESSION are loaded from it per request.
+STATE_COOKIE = "nexus_run"
+_COOKIE_KEY = hashlib.sha256(b"nexus-run-cookie:" + api_key.encode()).digest()  # secret derived from the API key
+_STATE_LOCK = asyncio.Lock()  # one /api request at a time per instance, since the state is module-global
+
+
+def _sign(raw: str) -> str:
+    return hmac.new(_COOKIE_KEY, raw.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _pack(data: dict) -> str:
+    raw = base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).decode()
+    return f"{raw}.{_sign(raw)}"
+
+
+def _unpack(cookie: Optional[str]) -> dict:
+    try:
+        raw, sig = (cookie or "").rsplit(".", 1)
+        if hmac.compare_digest(sig, _sign(raw)):  # tampered or foreign cookies are ignored
+            return json.loads(base64.urlsafe_b64decode(raw.encode()))
+    except Exception:
+        pass
+    return {}
+
+
+@app.middleware("http")
+async def run_state_cookie(request: Request, call_next):
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    async with _STATE_LOCK:
+        saved = _unpack(request.cookies.get(STATE_COOKIE))
+        GAME_STATE.clear()
+        GAME_STATE.update({**fresh_state(), **saved.get("state", {})})
+        SESSION.update(thread_id=saved.get("thread_id"), assistant_id=saved.get("assistant_id"))
+        response = await call_next(request)
+        https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+        response.set_cookie(
+            STATE_COOKIE,
+            _pack({"state": GAME_STATE, "thread_id": SESSION["thread_id"], "assistant_id": SESSION["assistant_id"]}),
+            max_age=7 * 24 * 3600, httponly=True, samesite="lax", secure=https,
+        )
+        return response
+
+
 class MessageIn(BaseModel):
     message: str
     mode: str = DEFAULT_MODE
@@ -567,10 +623,17 @@ async def new_session():
 
 @app.post("/api/new_campaign")
 async def new_campaign():
-    """Forget the cached assistant so the next call creates a fresh one with zero memories."""
-    ASSISTANT_FILE.unlink(missing_ok=True)
+    """Fresh assistant with zero memories; its id rides in this player's cookie."""
+    try:
+        ASSISTANT_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
     SESSION.update({"thread_id": None, "assistant_id": None})
     GAME_STATE.update(fresh_state())
+    try:
+        await ensure_assistant(fresh=True)
+    except Exception:
+        pass  # next call falls back to the default assistant
     return {"ok": True, "state": GAME_STATE}
 
 
