@@ -7,6 +7,9 @@ const CORRUPT = "▓▒░█▞▚◣◥";
 let busy = false;
 let runOver = false; // input stays locked until PLAY AGAIN
 let humanity = 100;
+let lastData = {}; // latest /api/state or turn response
+const JSON_H = { "Content-Type": "application/json" };
+const postJSON = (url, body = {}) => fetch(url, { method: "POST", headers: JSON_H, body: JSON.stringify(body) });
 
 // ---------- helpers ----------
 function addMsg(cls, text) {
@@ -54,6 +57,8 @@ function updateHUD(state) {
   hb.style.width = state.humanity + "%";
   hb.classList.toggle("low", state.humanity < 50);
   $("creds-val").textContent = "\u00A4" + state.creds;
+  const cls = (lastData.classes || {})[state.class];
+  $("who-val").textContent = state.handle ? state.handle + (cls ? " // " + cls.name : "") : "";
   $("cyber-list").textContent = state.cyberware.length ? state.cyberware.join(" | ") : "\u2014 none \u2014";
 
   document.body.classList.remove("g0", "g1", "g2", "g3");
@@ -501,7 +506,54 @@ function showResults(d) {
     `TURNS USED: ${d.turn}/${d.max_turns}\n` +
     `HP ${s.hp}  //  HUMANITY ${s.humanity}  //  CREDS ¤${s.creds}\n` +
     `CYBERWARE: ${(s.cyberware || []).join(", ") || "none"}`;
+  $("restart-btn").textContent = d.can_play ? "PLAY AGAIN" : "CONTINUE";
   $("gameover").classList.remove("hidden");
+}
+
+// ---------- come back tomorrow ----------
+let cbTimer = null;
+function showComeback(d) {
+  const end = Date.now() + (d.next_reset_seconds || 0) * 1000;
+  const tick = () => {
+    const s = Math.max(0, Math.round((end - Date.now()) / 1000));
+    $("cb-timer").textContent = [s / 3600, (s % 3600) / 60, s % 60].map((v) => String(Math.floor(v)).padStart(2, "0")).join(":");
+    if (s <= 0) { clearInterval(cbTimer); location.reload(); }
+  };
+  clearInterval(cbTimer); tick(); cbTimer = setInterval(tick, 1000);
+  const r = d.rating;
+  $("cb-today").textContent = r && d.mission && d.mission.title
+    ? `TODAY: ${d.mission.title}\nGRADE ${r.grade}  //  SCORE ${r.score}  //  +\u00A4${r.creds_earned || 0}` : "";
+  $("cb-streak").textContent = `STREAK: ${d.streak || 0} DAY${d.streak === 1 ? "" : "S"}`;
+  $("gameover").classList.add("hidden");
+  $("comeback").classList.remove("hidden");
+}
+
+// ---------- first visit: 18+ notice, handle, class ----------
+function showOnboard(classes) {
+  const box = $("ob-classes");
+  box.textContent = "";
+  let pick = "";
+  for (const [id, c] of Object.entries(classes || {})) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ob-class";
+    const n = document.createElement("b"); n.textContent = c.name;
+    const s = document.createElement("span"); s.textContent = c.blurb;
+    const t = document.createElement("small");
+    t.textContent = Object.entries(c.stats).map(([k, v]) => `${k.toUpperCase()} ${v}`).join("  ");
+    b.append(n, s, t);
+    b.addEventListener("click", () => { pick = id; box.querySelectorAll(".ob-class").forEach((x) => x.classList.toggle("sel", x === b)); });
+    box.appendChild(b);
+  }
+  $("ob-go").onclick = async () => {
+    $("ob-error").textContent = "";
+    const res = await postJSON("/api/profile", { handle: $("ob-handle").value, cls: pick, adult: $("ob-adult").checked });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { $("ob-error").textContent = d.error || "Could not create your runner."; return; }
+    $("onboard").classList.add("hidden");
+    boot();
+  };
+  $("onboard").classList.remove("hidden");
+  $("ob-handle").focus();
 }
 
 // ---------- core turn ----------
@@ -511,34 +563,36 @@ function setBusy(on) {
   $("send-btn").disabled = lock;
   input.disabled = lock;
   input.placeholder = runOver ? "" : "what will you do next?";
-  if (!lock) input.focus();
+  if (!lock && $("onboard").classList.contains("hidden")) input.focus();
 }
 
 const clean = (t) => String(t).replace(/\*\*|__/g, ""); // drop markdown bold
 
-async function sendMessage(text, hidden = false, note = "") {
+// kind: "turn" (typed, costs a prompt) | "open" / "resume" (hidden; the server writes the text)
+async function sendMessage(text, kind = "turn", note = "") {
   if (busy) return;
+  const hidden = kind !== "turn";
   setBusy(true);
   if (!hidden) addMsg("user", text);
   showPending(note);
 
   try {
-    const res = await fetch("/api/message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, mode: $("mode").value, counts_turn: !hidden }),
-    });
+    const res = await postJSON("/api/message", { message: hidden ? "" : text, mode: $("mode").value, kind });
     if (res.status === 409) {
       const st = await (await fetch("/api/state")).json();
-      runOver = true; updateHUD(st.state); updateMission(st); showResults(st);
+      lastData = st;
+      if (st.run_over) { runOver = true; updateHUD(st.state); updateMission(st); showResults(st); }
+      else setTimeout(() => boot(), 0);
       return;
     }
     const data = await res.json();
 
     if (data.error) {
+      if (!hidden && res.status !== 500) input.value = text; // rate limit / length: let them retry
       await playDialogue([sys("!! " + data.error)]);
       return;
     }
+    lastData = { ...lastData, ...data };
 
     const fxType = pickEffect(data); // fire before any dialogue starts
     if (fxType) playEffect(fxType);
@@ -583,29 +637,27 @@ async function sendMessage(text, hidden = false, note = "") {
 // hidden boot messages never cost a prompt (counts_turn: false)
 async function boot(note = "") {
   try {
-    const res = await fetch("/api/state");
-    const data = await res.json();
+    const data = await (await fetch("/api/state")).json();
+    lastData = data;
+    if (data.needs_profile) { showOnboard(data.classes); return; }
     updateHUD(data.state);
     updateMission(data);
-    drawScene(data.location);
+    drawScene(data.state.location);
     renderMemories(data.memories || []);
-    if (data.run_over) { runOver = true; setBusy(false); showResults(data); return; }
-    if (data.mission && data.mission.objective) {
-      sendMessage(
-        "A new session begins mid-mission. Open with a short 'Previously in Neo-Hamilton...' recap of this mission so far, then set the scene and give me a choice.",
-        true, note || "// resuming neural link \u2014 mission in progress"
-      );
-    } else if (data.has_memories) {
-      sendMessage(
-        "A new run begins. Briefly nod to what you remember about me from earlier runs, then brief me on the new mission and set the opening scene. End with a clear choice.",
-        true, note || "// new run \u2014 engrams detected"
-      );
-    } else {
-      sendMessage(
-        "I am a new runner jacking in for the first time. Introduce the world of Neo-Hamilton 2077, brief me on my mission and set the opening scene. End with a clear choice.",
-        true, note || "// first neural link \u2014 no engrams"
-      );
+    if (data.run_over) { // today's run is finished
+      runOver = true; setBusy(false);
+      if (data.can_play) showResults(data); else showComeback(data);
+      return;
     }
+    if (!data.active) {
+      if (!data.can_play) { runOver = true; setBusy(false); showComeback(data); return; }
+      const res = await fetch("/api/run/start", { method: "POST" });
+      if (!res.ok) { await playDialogue([sys("!! " + ((await res.json().catch(() => ({}))).error || "could not start a run"))]); return; }
+      return boot(note);
+    }
+    runOver = false;
+    if (data.opened) sendMessage("", "resume", note || "// resuming neural link \u2014 mission in progress");
+    else sendMessage("", "open", note || ((data.history || []).length ? "// new day \u2014 engrams detected" : "// first neural link \u2014 no engrams"));
   } catch (e) {
     playDialogue([sys("!! backend offline: " + e.message)]);
   }
@@ -616,6 +668,7 @@ $("input-row").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = input.value.trim();
   if (!text || busy) return;
+  if (text.length < 3) { playDialogue([sys("!! Say a little more: at least 3 characters.")]); return; }
   input.value = "";
   sendMessage(text);
 });
@@ -628,8 +681,9 @@ $("new-session").addEventListener("click", async () => {
 });
 
 $("new-campaign").addEventListener("click", async () => {
-  if (busy || !confirm("Start a new campaign? NEXUS will forget everything.")) return;
-  await fetch("/api/new_campaign", { method: "POST" });
+  if (busy || !confirm("Wipe your runner? NEXUS forgets everything and your gear is gone. Today's run limit still applies.")) return;
+  const res = await fetch("/api/new_campaign", { method: "POST" });
+  if (!res.ok) { playDialogue([sys("!! " + ((await res.json().catch(() => ({}))).error || "wipe failed"))]); return; }
   runOver = false;
   $("gameover").classList.add("hidden");
   chatLog.innerHTML = "";
@@ -638,7 +692,8 @@ $("new-campaign").addEventListener("click", async () => {
 
 // PLAY AGAIN: new run, same NEXUS (memories carry over)
 $("restart-btn").addEventListener("click", async () => {
-  await fetch("/api/reset", { method: "POST" });
+  if (!lastData.can_play) { showComeback(lastData); return; }
+  await fetch("/api/run/start", { method: "POST" });
   runOver = false;
   $("gameover").classList.add("hidden");
   chatLog.innerHTML = "";

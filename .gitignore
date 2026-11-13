@@ -7,3 +7,5 @@ nexus_assistant.json
 
 .vercel
 .env*
+nexus.db
+nexus.db-*

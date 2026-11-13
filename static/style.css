@@ -211,6 +211,7 @@ body.g3 #dialogue:not(.sys) #dlg-text { text-shadow: 3px 0 var(--pink), -3px 0 v
 
 /* ---- phones: one screen, no page scroll; dialogue under the scene, input always visible ---- */
 @media (max-width: 600px) {
+  #who-stat { display: none; }
   body { height: 100vh; height: 100dvh; overflow: hidden; }
   #hud { gap: 4px 10px; padding: 6px 10px; }
   .hud-title { font-size: 16px; letter-spacing: 3px; }
@@ -402,3 +403,30 @@ body.g3 #crt { animation: flicker 1.1s infinite; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--teal); }
 ::-webkit-scrollbar-track { background: #000; }
+
+/* ---- onboarding / come-back overlays ---- */
+.overlay { position: fixed; inset: 0; z-index: 90; background: rgba(2,3,6,.96); display: flex; overflow-y: auto; }
+.overlay.hidden { display: none; }
+.ov-inner { margin: auto; padding: 24px 18px; width: 100%; max-width: 640px; text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.ov-title { font-size: 34px; letter-spacing: 6px; color: var(--pink); text-shadow: 0 0 24px var(--pink); }
+.ov-warn { color: var(--yellow); font-size: 14px; line-height: 1.5; }
+.ov-check { color: #cde; font-size: 14px; display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.ov-check input { width: 18px; height: 18px; accent-color: var(--teal); }
+.ov-input { width: 100%; max-width: 380px; background: #000; color: var(--teal); border: 1px solid var(--teal); padding: 10px 12px; font: inherit; font-size: 16px; }
+.ov-error { color: var(--pink); min-height: 1.2em; font-size: 13px; }
+.ob-classes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; width: 100%; }
+.ob-class { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 10px 12px; color: var(--teal); border: 1px solid #1d3a44; background: #05090d; text-shadow: none; }
+.ob-class b { color: var(--yellow); letter-spacing: 3px; }
+.ob-class span { color: #cde; font-size: 12px; line-height: 1.4; }
+.ob-class small { color: #789; font-size: 11px; letter-spacing: 1px; }
+.ob-class:hover, .ob-class.sel { background: #0a1a22; color: var(--teal); border-color: var(--yellow); box-shadow: 0 0 14px rgba(255,210,63,.35); }
+#ob-go { font-size: 16px; padding: 12px 28px; }
+.cb-timer { font-size: 56px; color: var(--yellow); text-shadow: 0 0 24px var(--yellow); letter-spacing: 4px; }
+.cb-today { color: #cde; font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
+.cb-streak { color: var(--teal); letter-spacing: 3px; }
+.who { color: #cde; }
+@media (max-width: 600px) {
+  .ov-title { font-size: 24px; letter-spacing: 4px; }
+  .ob-classes { grid-template-columns: 1fr; }
+  .cb-timer { font-size: 40px; }
+}

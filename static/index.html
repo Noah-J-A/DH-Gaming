@@ -24,6 +24,10 @@
 
 <header id="hud">
   <div class="hud-title glitch" data-text="NEXUS">NEXUS</div>
+  <div class="hud-stat" id="who-stat">
+    <span class="label">RUNNER</span>
+    <span id="who-val" class="val who"></span>
+  </div>
   <div class="hud-stat">
     <span class="label">HP</span>
     <span id="hp-val" class="val">20</span>
@@ -95,7 +99,7 @@
       <div id="chat-log"></div>
       <form id="input-row">
         <span class="prompt-char">&gt;</span>
-        <input id="chat-input" type="text" autocomplete="off" placeholder="what will you do next?" />
+        <input id="chat-input" type="text" autocomplete="off" maxlength="280" placeholder="what will you do next?" />
         <button type="submit" id="send-btn">TX</button>
       </form>
     </div>
@@ -113,6 +117,27 @@
     <div id="d20-label"></div>
   </div>
   <div id="d20-hint" class="hidden">&#9660; click to continue</div>
+</div>
+
+<div id="onboard" class="overlay hidden">
+  <div class="ov-inner">
+    <div class="ov-title">NEW RUNNER</div>
+    <p class="ov-warn">This game has strong language and dark themes.</p>
+    <label class="ov-check"><input type="checkbox" id="ob-adult"> I am 18 or older</label>
+    <input id="ob-handle" class="ov-input" maxlength="16" autocomplete="off" placeholder="your handle (3-16 letters, numbers, _ or space)">
+    <div id="ob-classes" class="ob-classes"></div>
+    <div id="ob-error" class="ov-error"></div>
+    <button id="ob-go">JACK IN</button>
+  </div>
+</div>
+
+<div id="comeback" class="overlay hidden">
+  <div class="ov-inner">
+    <div class="ov-title">COME BACK IN</div>
+    <div id="cb-timer" class="cb-timer">00:00:00</div>
+    <div id="cb-today" class="cb-today"></div>
+    <div id="cb-streak" class="cb-streak"></div>
+  </div>
 </div>
 
 <div id="gameover" class="hidden">

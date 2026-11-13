@@ -5,3 +5,5 @@
 __pycache__
 nexus_assistant.json
 .vscode
+nexus.db
+nexus.db-*
