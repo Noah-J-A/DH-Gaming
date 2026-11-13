@@ -112,7 +112,10 @@ function showRoll(value) {
     const d20 = $("d20");
     const num = $("d20-num");
     const label = $("d20-label");
+    const hint = $("d20-hint");
     d20.classList.remove("nat20", "nat1");
+    label.textContent = "";
+    hint.classList.add("hidden");
     overlay.classList.remove("hidden");
 
     const start = performance.now();
@@ -134,7 +137,16 @@ function showRoll(value) {
           document.body.classList.add("shake");
           setTimeout(() => document.body.classList.remove("shake"), 500);
         }
-        setTimeout(() => { overlay.classList.add("hidden"); resolve(); }, 1200);
+        // wait for click / Enter / Space; ignore the first 400ms so a double-click can't skip the result
+        hint.classList.remove("hidden");
+        const landedAt = performance.now();
+        rollContinue = () => {
+          if (performance.now() - landedAt < 400) return;
+          rollContinue = null;
+          hint.classList.add("hidden");
+          overlay.classList.add("hidden");
+          resolve();
+        };
       }
     }, 70);
   });
@@ -282,8 +294,9 @@ function showTab(name) {
 document.querySelectorAll(".phone-tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
 // ---------- dialogue box (queue of NEXUS + SYSTEM lines) ----------
-const dlg = $("dialogue"), dlgText = $("dlg-text");
-let dlgTyping = false, dlgAdvance = null;
+const dlg = $("dialogue"), dlgText = $("dlg-text"), dlgLog = $("dlg-log");
+let dlgTyping = false, dlgAdvance = null, pageDoneAt = 0, rollContinue = null;
+const dlgHistory = []; // last 20 shown pages, for the LOG panel
 const sys = (text) => ({ who: "sys", text });
 const STAT_NAMES = { hp: "HP", humanity: "Humanity", creds: "Creds" };
 
@@ -314,44 +327,73 @@ function setSpeaker(who) {
   $("dlg-name").textContent = who === "sys" ? "SYSTEM" : "NEXUS";
 }
 
+// corner marker: "more" = blinking ▼, "done" = "...", "pending" = uplink, null = none
+function setMark(mark) {
+  dlg.classList.remove("more", "done", "pending");
+  if (mark) dlg.classList.add(mark);
+}
+
+// the previous turn's last page stays up while we wait; a note (new session etc.) replaces it
 function showPending(note) {
-  setSpeaker("sys");
-  dlg.classList.remove("hidden", "more");
-  dlg.classList.add("pending");
-  dlgText.textContent = (note ? note + "\n" : "") + "… uplink …";
+  if (note) { setSpeaker("sys"); dlgText.textContent = note; dlg.classList.remove("hidden"); }
+  setMark("pending");
 }
 
 async function playDialogue(lines) {
   if (document.activeElement) document.activeElement.blur(); // so Space can't re-click a focused button
-  for (const line of lines) {
+  for (const [li, line] of lines.entries()) {
     if (line.before) await line.before();
     setSpeaker(line.who);
-    dlg.classList.remove("hidden", "pending");
-    for (const page of paginate(line.text)) {
-      dlg.classList.remove("more");
+    dlg.classList.remove("hidden");
+    const pages = paginate(line.text);
+    for (const [pi, page] of pages.entries()) {
+      setMark(null);
+      dlgHistory.push({ who: line.who, text: page });
+      if (dlgHistory.length > 20) dlgHistory.shift();
       skipTyping = false; dlgTyping = true;
       await typewriter(dlgText, page, line.who === "gm");
-      dlgTyping = false;
-      dlg.classList.add("more");
+      dlgTyping = false; pageDoneAt = performance.now();
+      if (li === lines.length - 1 && pi === pages.length - 1) { setMark("done"); return; } // last page stays up
+      setMark("more");
       await new Promise((r) => (dlgAdvance = r));
       dlgAdvance = null;
     }
   }
-  dlg.classList.add("hidden");
-  dlg.classList.remove("more");
 }
 
+// mid-typing: finish the page only. After a page lands: ignore advances for 250ms.
 function advanceDialogue() {
   if (dlgTyping) skipTyping = true;
-  else if (dlgAdvance) dlgAdvance();
+  else if (dlgAdvance && performance.now() - pageDoneAt >= 250) dlgAdvance();
 }
 dlg.addEventListener("click", advanceDialogue);
+$("d20-overlay").addEventListener("click", () => rollContinue && rollContinue());
 document.addEventListener("keydown", (e) => {
-  if ((e.key === "Enter" || e.key === " ") && (dlgTyping || dlgAdvance)) {
-    e.preventDefault();
-    if (!e.repeat) advanceDialogue();
-  }
+  if (!dlgLog.classList.contains("hidden")) { if (e.key === "Escape") dlgLog.classList.add("hidden"); return; }
+  if (e.key !== "Enter" && e.key !== " ") return;
+  if (rollContinue) { e.preventDefault(); if (!e.repeat) rollContinue(); }
+  else if (dlgTyping || dlgAdvance) { e.preventDefault(); if (!e.repeat) advanceDialogue(); }
 });
+
+// LOG: safety net for anything clicked past
+$("dlg-log-btn").addEventListener("click", (e) => {
+  e.stopPropagation(); // don't advance the dialogue
+  e.currentTarget.blur();
+  const list = $("dlg-log-list");
+  list.innerHTML = "";
+  for (const h of dlgHistory) {
+    const row = document.createElement("div");
+    row.className = "log-line" + (h.who === "sys" ? " sys" : "");
+    const who = document.createElement("b");
+    who.textContent = h.who === "sys" ? "SYSTEM" : "NEXUS";
+    row.append(who, h.text);
+    list.appendChild(row);
+  }
+  if (!dlgHistory.length) list.textContent = "// buffer empty";
+  dlgLog.classList.remove("hidden");
+  list.scrollTop = list.scrollHeight;
+});
+$("dlg-log-close").addEventListener("click", () => dlgLog.classList.add("hidden"));
 
 function rollLine(v) {
   const res = v === 20 ? "CRITICAL SUCCESS" : v === 1 ? "CRITICAL FAILURE" :
