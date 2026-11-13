@@ -404,9 +404,78 @@ function rollLine(v) {
   return `Risk check: d20 ${v} vs DC 15. ${res}`;
 }
 
+// ---------- screen fx: canvas + CSS only, each under 900ms ----------
+const fxCanvas = $("fx"), fxc = fxCanvas.getContext("2d");
+let fxRun = 0;
+function fxStar(x, y, s) { // 4-point star
+  fxc.beginPath(); fxc.moveTo(x, y - s);
+  fxc.quadraticCurveTo(x, y, x + s, y); fxc.quadraticCurveTo(x, y, x, y + s);
+  fxc.quadraticCurveTo(x, y, x - s, y); fxc.quadraticCurveTo(x, y, x, y - s);
+  fxc.fill();
+}
+function playEffect(type) {
+  const body = document.body;
+  if (type === "glitch") {
+    body.classList.remove("fx-glitch"); void body.offsetWidth; body.classList.add("fx-glitch");
+    setTimeout(() => body.classList.remove("fx-glitch"), 300);
+    return;
+  }
+  if (type === "explosion" || type === "hit") { body.classList.add("shake"); setTimeout(() => body.classList.remove("shake"), 500); }
+  const W = (fxCanvas.width = innerWidth), H = (fxCanvas.height = innerHeight);
+  const sr = $("scene").getBoundingClientRect(), cx = sr.left + sr.width / 2, cy = sr.top + sr.height / 2;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const parts = type === "explosion"
+    ? Array.from({ length: 30 }, (_, i) => ({ x: cx, y: cy, vx: rnd(-14, 14), vy: rnd(-16, 8), s: rnd(4, 10), c: ["#ff8a1f", "#FFD23F", "#FF3B5C"][i % 3] }))
+    : type === "sparkle"
+    ? Array.from({ length: 40 }, (_, i) => ({ x: rnd(sr.left, sr.right), y: rnd(sr.top + sr.height * 0.3, sr.bottom), vy: rnd(1, 3), s: rnd(3, 7), c: i % 2 ? "#FFD23F" : "#00B4C8" }))
+    : [];
+  const dur = { explosion: 800, sparkle: 850, hit: 450 }[type] || 500;
+  const id = ++fxRun, t0 = performance.now();
+  const frame = (now) => {
+    if (id !== fxRun) return; // a newer effect took over
+    const t = Math.min(1, (now - t0) / dur);
+    fxc.clearRect(0, 0, W, H);
+    fxc.save();
+    fxc.beginPath(); fxc.rect(0, 0, W, H); // cut the dialogue box out so it stays on top
+    if (!dlg.classList.contains("hidden")) { const r = dlg.getBoundingClientRect(); fxc.rect(r.left - 6, r.top - 6, r.width + 12, r.height + 12); }
+    fxc.clip("evenodd");
+    if (type === "explosion") {
+      if (t < 0.3) { fxc.fillStyle = `rgba(255,255,255,${0.8 * (1 - t / 0.3)})`; fxc.fillRect(0, 0, W, H); }
+      fxc.globalAlpha = 1 - t;
+      ["#ff8a1f", "#FFD23F", "#FF3B5C"].forEach((c, i) => {
+        fxc.strokeStyle = c; fxc.lineWidth = 12 - i * 3;
+        fxc.beginPath(); fxc.arc(cx, cy, Math.max(0, t - i * 0.1) * sr.width * 0.6, 0, Math.PI * 2); fxc.stroke();
+      });
+      for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vy += 0.5; fxc.fillStyle = p.c; fxc.fillRect(p.x, p.y, p.s, p.s); }
+    } else if (type === "sparkle") {
+      fxc.globalAlpha = 1 - t; fxc.shadowColor = "#ffbf1f"; fxc.shadowBlur = 14;
+      for (const p of parts) { p.y -= p.vy; fxc.fillStyle = p.c; fxStar(p.x, p.y, p.s); }
+    } else if (type === "hit") {
+      const g = fxc.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, Math.max(W, H) * 0.7);
+      g.addColorStop(0, "rgba(255,0,40,0)"); g.addColorStop(1, `rgba(255,0,40,${0.7 * (1 - t)})`);
+      fxc.fillStyle = g; fxc.fillRect(0, 0, W, H);
+    }
+    fxc.restore();
+    if (t < 1) requestAnimationFrame(frame); else fxc.clearRect(0, 0, W, H);
+  };
+  requestAnimationFrame(frame);
+}
+
+// strongest one only: explosion > sparkle > glitch > hit. Rolls are raw d20s; success = 15+
+function pickEffect(d) {
+  const rolls = d.rolls || [], ch = d.stat_changes || [];
+  const hpLoss = -ch.filter((c) => c.stat === "hp" && c.amount < 0).reduce((a, c) => a + c.amount, 0);
+  const gained = ch.some((c) => (c.stat === "hp" || c.stat === "creds") && c.amount > 0);
+  if (hpLoss >= 5 || rolls.includes(1)) return "explosion";
+  if (rolls.includes(20) || (gained && rolls.some((v) => v >= 15))) return "sparkle";
+  if ((d.installed || []).length) return "glitch";
+  if (hpLoss > 0 || rolls.some((v) => v < 15)) return "hit";
+  return null;
+}
+
 // ---------- mission banner ----------
 function updateMission(d) {
-  const m = d.mission || {}, max = d.max_turns || 10, left = Math.max(0, max - (d.turn || 0));
+  const m = d.mission || {}, max = d.max_turns || 5, left = Math.max(0, max - (d.turn || 0));
   $("mission-title").textContent = m.title || "awaiting briefing";
   $("mission-obj").textContent = m.objective ? "— " + m.objective : "";
   $("mission-obj").title = m.objective || "";
@@ -464,6 +533,9 @@ async function sendMessage(text, hidden = false, note = "") {
       await playDialogue([sys("!! " + data.error)]);
       return;
     }
+
+    const fxType = pickEffect(data); // fire before any dialogue starts
+    if (fxType) playEffect(fxType);
 
     // queue: rolls (overlay first), stat changes, implants, lost engrams, then NEXUS
     const rolls = data.rolls || [], changes = data.stat_changes || [];

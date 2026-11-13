@@ -41,7 +41,7 @@ SYSTEM_PROMPT = (
     "achievable goal that fits Neo-Hamilton 2077, and vary it each run (heist, rescue, sabotage, "
     "escape, delivery). Keep every reply moving the player toward or away from that goal. Hidden "
     "[system: ...] notes give you the turn count: never quote them or lecture about the turn limit, "
-    "but warn the player naturally in the story when 2 turns remain. When told the run is over, "
+    "but warn the player naturally in the story when 1 turn remains. When told the run is over, "
     "call submit_rating and be honest: S only for a clever, fully achieved goal; D and F for clear "
     "failure. In the verdict and your final lines, mention the player's earlier choices and what "
     "the world will remember."
@@ -147,7 +147,7 @@ ASSISTANT_FILE = Path(__file__).parent / "nexus_assistant.json"
 STATIC_DIR = Path(__file__).parent / "static"
 
 INITIAL_STATE = {"hp": 20, "humanity": 100, "creds": 500, "cyberware": [], "location": "street",
-                 "mission": {"title": "", "objective": ""}, "turn": 0, "max_turns": 10, "rating": None}
+                 "mission": {"title": "", "objective": ""}, "turn": 0, "max_turns": 5, "rating": None}
 DEFAULT_MISSION = {"title": "Criteria Heist", "objective": "Steal the judging criteria from the Delta Corp server room"}
 
 

@@ -281,6 +281,18 @@ body.g3 #dialogue:not(.sys) #dlg-text { text-shadow: 3px 0 var(--pink), -3px 0 v
 #d20.nat1 { border-color: var(--pink); box-shadow: 0 0 60px var(--pink); }
 #d20.nat1 #d20-num { color: var(--pink); text-shadow: 0 0 20px var(--pink); }
 
+/* ---- screen fx (above scene, below d20/crt; dialogue box is clipped out in JS) ---- */
+#fx { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 40; pointer-events: none; }
+body.fx-glitch { animation: fxglitch .3s steps(1) 1; }
+@keyframes fxglitch {
+  0%   { transform: translateX(-8px) skewX(4deg); filter: drop-shadow(5px 0 var(--pink)) drop-shadow(-5px 0 var(--teal)); }
+  20%  { transform: translateX(10px); clip-path: inset(12% 0 55% 0); filter: drop-shadow(-6px 0 var(--pink)); }
+  40%  { transform: translateX(-5px) skewX(-6deg); filter: drop-shadow(6px 0 var(--teal)) drop-shadow(-4px 0 var(--pink)); }
+  60%  { transform: translateX(7px); clip-path: inset(48% 0 18% 0); filter: drop-shadow(-5px 0 var(--teal)); }
+  80%  { transform: translateX(-10px) skewX(3deg); filter: drop-shadow(4px 0 var(--pink)) drop-shadow(-4px 0 var(--teal)); }
+  100% { transform: none; filter: none; clip-path: none; }
+}
+
 /* ---- flash + shake ---- */
 #flash { position: fixed; inset: 0; z-index: 55; pointer-events: none; opacity: 0; }
 #flash.boom { animation: boom .5s; }
