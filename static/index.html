@@ -7,6 +7,19 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="g0">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- NEXUS mark: impossible triangle from three bars -->
+  <symbol id="nexus-logo" viewBox="0 0 40 40">
+    <polygon fill="#00B4C8" points="5,35.2 17.5,13.6 25,26.5 30,26.5 17.5,4.9 2.5,30.9"/>
+    <polygon fill="#FF3B5C" points="37.5,30.9 12.5,30.9 20,17.9 17.5,13.6 5,35.2 35,35.2"/>
+    <polygon fill="#FFD23F" points="17.5,4.9 30,26.5 15,26.5 12.5,30.9 37.5,30.9 22.5,4.9"/>
+  </symbol>
+  <symbol id="warn-glyph" viewBox="0 0 40 40">
+    <polygon fill="#FFD23F" points="20,3 38,36 2,36"/>
+    <rect x="18" y="13" width="4" height="13" fill="#07080d"/>
+    <rect x="18" y="29" width="4" height="4" fill="#07080d"/>
+  </symbol>
+</svg>
 <div id="crt"></div>
 
 <header id="hud">
@@ -46,13 +59,21 @@
       <canvas id="scene" width="480" height="270"></canvas>
       <div id="wipe"></div>
       <div id="scene-label">LOC // STREET</div>
+      <div id="dialogue" class="hidden">
+        <div id="dlg-speaker">
+          <svg class="dlg-logo"><use href="#nexus-logo"/></svg>
+          <svg class="dlg-warn"><use href="#warn-glyph"/></svg>
+          <span id="dlg-name">NEXUS</span>
+        </div>
+        <div id="dlg-text"></div>
+      </div>
     </div>
   </section>
 
   <aside id="phone">
     <div class="phone-notch"></div>
     <div class="phone-status"><span>20:77</span><span>NCNET 5G &#9646;&#9646;&#9646;&#9647;</span></div>
-    <div class="phone-header">NEXUS <span>// your assistant</span></div>
+    <div class="phone-header"><svg class="logo"><use href="#nexus-logo"/></svg>NEXUS <span>// your assistant</span></div>
     <nav class="phone-tabs">
       <button class="active" data-tab="chat">CHAT</button>
       <button data-tab="memory">MEMORY <span id="mem-count"></span></button>
@@ -62,7 +83,7 @@
       <div id="chat-log"></div>
       <form id="input-row">
         <span class="prompt-char">&gt;</span>
-        <input id="chat-input" type="text" autocomplete="off" placeholder="what do you do, choom?" />
+        <input id="chat-input" type="text" autocomplete="off" placeholder="what will you do next?" />
         <button type="submit" id="send-btn">TX</button>
       </form>
     </div>

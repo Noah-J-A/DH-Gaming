@@ -26,17 +26,18 @@ function corrupt(text) {
   ).join("");
 }
 
-function typewriter(el, text) {
+let skipTyping = false; // set by click/Enter mid-page to finish it instantly
+function typewriter(el, text, glitchy = true) {
+  const fx = glitchy ? corrupt : (t) => t;
   return new Promise((resolve) => {
     el.classList.add("cursor");
     const start = performance.now();
-    const CPS = 220; // chars per second; time-based so background-tab throttling can't stall it
+    const CPS = 90; // chars per second; time-based so background-tab throttling can't stall it
     const tick = () => {
-      const i = Math.min(text.length, Math.floor(((performance.now() - start) / 1000) * CPS));
-      el.textContent = corrupt(text.slice(0, i));
-      chatLog.scrollTop = chatLog.scrollHeight;
+      const i = skipTyping ? text.length : Math.min(text.length, Math.floor(((performance.now() - start) / 1000) * CPS));
+      el.textContent = fx(text.slice(0, i));
       if (i < text.length) setTimeout(tick, 18);
-      else { el.textContent = corrupt(text); el.classList.remove("cursor"); resolve(); }
+      else { el.textContent = fx(text); el.classList.remove("cursor"); resolve(); }
     };
     tick();
   });
@@ -280,6 +281,84 @@ function showTab(name) {
 }
 document.querySelectorAll(".phone-tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
+// ---------- dialogue box (queue of NEXUS + SYSTEM lines) ----------
+const dlg = $("dialogue"), dlgText = $("dlg-text");
+let dlgTyping = false, dlgAdvance = null;
+const sys = (text) => ({ who: "sys", text });
+const STAT_NAMES = { hp: "HP", humanity: "Humanity", creds: "Creds" };
+
+// pages of <= max chars, breaking on sentences, then words; short lines/paragraphs share a page
+function paginate(text, max = 110) {
+  const pages = [];
+  let cur = "";
+  const flush = () => { if (cur.trim()) pages.push(cur.trim()); cur = ""; };
+  for (const para of String(text).split(/\n+/)) {
+    (para.match(/[^.!?]*[.!?]+["')\]]*|[^.!?]+$/g) || []).forEach((raw, si) => {
+      const s = raw.trim();
+      if (!s) return;
+      const sep = cur ? (si === 0 ? "\n" : /^\s/.test(raw) ? " " : "") : "";
+      if ((cur + sep + s).length <= max) { cur += sep + s; return; }
+      flush();
+      for (const w of s.split(/\s+/)) {
+        if (cur && (cur + " " + w).length > max) flush();
+        cur += (cur ? " " : "") + w;
+      }
+    });
+  }
+  flush();
+  return pages.length ? pages : [""];
+}
+
+function setSpeaker(who) {
+  dlg.classList.toggle("sys", who === "sys");
+  $("dlg-name").textContent = who === "sys" ? "SYSTEM" : "NEXUS";
+}
+
+function showPending(note) {
+  setSpeaker("sys");
+  dlg.classList.remove("hidden", "more");
+  dlg.classList.add("pending");
+  dlgText.textContent = (note ? note + "\n" : "") + "… uplink …";
+}
+
+async function playDialogue(lines) {
+  if (document.activeElement) document.activeElement.blur(); // so Space can't re-click a focused button
+  for (const line of lines) {
+    if (line.before) await line.before();
+    setSpeaker(line.who);
+    dlg.classList.remove("hidden", "pending");
+    for (const page of paginate(line.text)) {
+      dlg.classList.remove("more");
+      skipTyping = false; dlgTyping = true;
+      await typewriter(dlgText, page, line.who === "gm");
+      dlgTyping = false;
+      dlg.classList.add("more");
+      await new Promise((r) => (dlgAdvance = r));
+      dlgAdvance = null;
+    }
+  }
+  dlg.classList.add("hidden");
+  dlg.classList.remove("more");
+}
+
+function advanceDialogue() {
+  if (dlgTyping) skipTyping = true;
+  else if (dlgAdvance) dlgAdvance();
+}
+dlg.addEventListener("click", advanceDialogue);
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && (dlgTyping || dlgAdvance)) {
+    e.preventDefault();
+    if (!e.repeat) advanceDialogue();
+  }
+});
+
+function rollLine(v) {
+  const res = v === 20 ? "CRITICAL SUCCESS" : v === 1 ? "CRITICAL FAILURE" :
+    v >= 15 ? "SUCCESS" : v >= 10 ? "SUCCESS AT A COST" : "FAILURE";
+  return `Risk check: d20 ${v} vs DC 15. ${res}`;
+}
+
 // ---------- game over (same screen, two causes) ----------
 function showGameOver(reason) {
   const flat = reason === "FLATLINED";
@@ -292,12 +371,18 @@ function showGameOver(reason) {
 }
 
 // ---------- core turn ----------
-async function sendMessage(text, hidden = false) {
+function setBusy(on) {
+  busy = on;
+  $("send-btn").disabled = on;
+  input.disabled = on;
+  if (!on) input.focus();
+}
+
+async function sendMessage(text, hidden = false, note = "") {
   if (busy) return;
-  busy = true;
-  $("send-btn").disabled = true;
+  setBusy(true);
   if (!hidden) addMsg("user", text);
-  const pending = addMsg("sys", "\u2026 uplink \u2026");
+  showPending(note);
 
   try {
     const res = await fetch("/api/message", {
@@ -306,37 +391,49 @@ async function sendMessage(text, hidden = false) {
       body: JSON.stringify({ message: text, mode: $("mode").value }),
     });
     const data = await res.json();
-    pending.remove();
 
     if (data.error) {
-      addMsg("sys", "!! " + data.error);
+      await playDialogue([sys("!! " + data.error)]);
       return;
     }
 
-    for (const roll of data.rolls || []) await showRoll(roll);
-
-    updateHUD(data.state);
-    drawScene(data.location);
-    const gmEl = addMsg("gm", "");
-    await typewriter(gmEl, data.text);
-    await refreshMemories(data.deleted_memories || []);
-
-    if ((data.deleted_memories || []).length) {
-      addMsg("sys", "!! NEURAL DEGRADATION: " + data.deleted_memories.length + " engram(s) lost");
+    // queue: rolls (overlay first), stat changes, implants, lost engrams, then NEXUS
+    const rolls = data.rolls || [], changes = data.stat_changes || [];
+    const installed = data.installed || [], deleted = data.deleted_memories || [];
+    const lines = rolls.map((v) => ({ ...sys(rollLine(v)), before: () => showRoll(v) }));
+    const humDelta = changes.filter((c) => c.stat === "humanity").reduce((a, c) => a + c.amount, 0);
+    const implantCost = humanity + humDelta - data.state.humanity; // read before updateHUD
+    for (const c of changes) lines.push(sys(`${STAT_NAMES[c.stat] || c.stat} ${c.amount > 0 ? "+" : ""}${c.amount}`));
+    for (const name of installed) {
+      lines.push(sys(`Installed: ${name}.` + (installed.length === 1 && implantCost > 0 ? ` Humanity -${implantCost}` : "")));
     }
+    let memP = null;
+    deleted.forEach((d, i) => lines.push({
+      ...sys("!! NEURAL DEGRADATION: 1 engram lost"),
+      before: i ? null : () => { memP = refreshMemories(deleted); },
+    }));
+    lines.push({ who: "gm", text: String(data.text).replace(/\*\*|__/g, "") }); // drop markdown bold
+
+    // reveal HUD + scene right after the dice
+    const first = lines[rolls.length], firstBefore = first.before;
+    first.before = async () => {
+      updateHUD(data.state);
+      drawScene(data.location);
+      if (firstBefore) await firstBefore();
+    };
+
+    await playDialogue(lines);
+    await (memP || refreshMemories());
     if (data.game_over) showGameOver(data.game_over_reason);
   } catch (e) {
-    pending.remove();
-    addMsg("sys", "!! uplink failed: " + e.message);
+    await playDialogue([sys("!! uplink failed: " + e.message)]);
   } finally {
-    busy = false;
-    $("send-btn").disabled = false;
-    input.focus();
+    setBusy(false);
   }
 }
 
 // ---------- boot ----------
-async function boot(recapOnly = false) {
+async function boot(recapOnly = false, note = "") {
   try {
     const res = await fetch("/api/state");
     const data = await res.json();
@@ -345,20 +442,18 @@ async function boot(recapOnly = false) {
     renderMemories(data.memories || []);
     if (data.game_over) { showGameOver(data.game_over_reason); return; }
     if (data.has_memories || recapOnly) {
-      addMsg("sys", "// resuming neural link \u2014 engrams detected");
       sendMessage(
         "A new session begins. Open with a short 'Previously in Neo-Hamilton...' recap of what you remember about me from your memories, then set the scene and give me a choice.",
-        true
+        true, note || "// resuming neural link \u2014 engrams detected"
       );
     } else {
-      addMsg("sys", "// first neural link \u2014 no engrams");
       sendMessage(
         "I am a new runner jacking in for the first time. Introduce the world of Neo-Hamilton 2077, my goal, and set the opening scene. End with a clear choice.",
-        true
+        true, note || "// first neural link — no engrams"
       );
     }
   } catch (e) {
-    addMsg("sys", "!! backend offline: " + e.message);
+    playDialogue([sys("!! backend offline: " + e.message)]);
   }
 }
 
@@ -375,8 +470,7 @@ $("new-session").addEventListener("click", async () => {
   if (busy) return;
   await fetch("/api/new_session", { method: "POST" });
   chatLog.innerHTML = "";
-  addMsg("sys", "// SESSION TERMINATED \u2014 new thread spun up, same NEXUS");
-  boot(true);
+  boot(true, "// SESSION TERMINATED \u2014 new thread spun up, same NEXUS");
 });
 
 $("new-campaign").addEventListener("click", async () => {
@@ -384,8 +478,7 @@ $("new-campaign").addEventListener("click", async () => {
   await fetch("/api/new_campaign", { method: "POST" });
   $("gameover").classList.add("hidden");
   chatLog.innerHTML = "";
-  addMsg("sys", "// CAMPAIGN WIPED — fresh NEXUS instance, zero engrams");
-  boot();
+  boot(false, "// CAMPAIGN WIPED — fresh NEXUS instance, zero engrams");
 });
 
 $("restart-btn").addEventListener("click", async () => {
