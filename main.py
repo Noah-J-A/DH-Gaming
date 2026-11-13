@@ -20,10 +20,16 @@ load_dotenv()
 # EDIT ME: per-mode model routing (llm_provider + model_name sent per message)
 # ---------------------------------------------------------------------------
 MODE_MODELS = {
-    "story":  {"llm_provider": "openai", "model_name": "gpt-4o-mini"},
-    "combat": {"llm_provider": "openai", "model_name": "gpt-4o-mini"},
-    "netrun": {"llm_provider": "openai", "model_name": "gpt-4o-mini"},
+    "story":  {"llm_provider": "anthropic", "model_name": "claude-haiku-5-5"},
+    "combat": {"llm_provider": "anthropic", "model_name": "claude-haiku-5-5"},
+    "netrun": {"llm_provider": "anthropic", "model_name": "claude-haiku-5-5"},
 }
+# Optional .env override for every mode: MODEL_PROVIDER / MODEL_NAME
+for _cfg in MODE_MODELS.values():
+    if os.environ.get("MODEL_PROVIDER"):
+        _cfg["llm_provider"] = os.environ["MODEL_PROVIDER"]
+    if os.environ.get("MODEL_NAME"):
+        _cfg["model_name"] = os.environ["MODEL_NAME"]
 DEFAULT_MODE = "story"
 
 MAX_TURNS = 5  # player prompts per run
