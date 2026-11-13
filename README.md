@@ -48,6 +48,22 @@ Progress lives in Supabase Postgres, so redeploys and cold starts keep every pro
 
 Push updates whenever you like: the code redeploys, the data stays. Free Supabase projects pause after 7 days with no traffic.
 
+## Analytics
+
+- **Traffic** (visitors, pages, countries, referrers): Vercel Web Analytics, cookieless. Turn it on once in the Vercel
+  project's **Analytics** tab; the page already loads `/_vercel/insights/script.js`.
+- **Game stats** (Supabase only): read-only views in schema `nexus`, created on startup. Open them in Supabase's
+  Table Editor (schema `nexus`) or the SQL editor:
+
+| View | Shows |
+|---|---|
+| `stats_totals` | profiles, players who ever played, finished runs, players who came back on another day, 3+ day streaks, best score |
+| `stats_daily` | per day: players, first-timers, runs started/finished, finish %, average and top score, messages |
+| `stats_dropoff` | per day: how many runs stopped after 0, 1, 2... prompts |
+| `stats_grades` | per day: runs and average score per grade |
+| `stats_classes` | players, finished runs and average score per class |
+| `stats_retention` | how many players played on 0, 1, 2... different days (0 = made a profile, never played) |
+
 ## How a day works
 
 1. **First visit:** 18+ notice, a handle and a class (BREAKER, SPLICER, GHOST, HUSTLER), each with stats and a starter item. The server sets an httponly `nexus_pid` cookie; everything is keyed to it in the database.
