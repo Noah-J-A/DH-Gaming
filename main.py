@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backboard import BackboardClient
+from missions import MARKET, MISSIONS, STARTER_ITEMS
 
 load_dotenv()
 
@@ -67,10 +68,15 @@ SYSTEM_PROMPT = (
     "under 120 words, second person. End every reply with a clear choice, EXCEPT on the final "
     "turn, which must end the story. Stay in character. "
     "Call set_location whenever the scene moves to a new place. "
-    "Every run is a mission. At the start of every run, call set_mission with ONE concrete, "
-    "achievable goal that fits Neo-Hamilton 2077, and vary it each run (heist, rescue, sabotage, "
-    f"escape, delivery). The mission must be completable or failable in {MAX_TURNS} player actions: "
-    "one objective, at most 2 locations, no multi-part quests. "
+    "Every run is today's daily mission, the same seed for every runner; the hidden note gives it to you. Retell it "
+    "in your own words with the player's own NPCs and gear, but keep the seed's objective and locations. "
+    "DIRECTION: at the end of every reply except the final one, call set_objective with the concrete beat the "
+    "player's NEXT prompt must accomplish, sometimes with a constraint that makes it harder (e.g. 'without firing a "
+    "weapon'), and end the reply on that objective. In rate_action, set followed_objective (did the prompt pursue "
+    "the current objective?) and met_constraint. INVENTORY: the server owns the player's items. The player may only "
+    "use items in their inventory or cyberware, listed in the hidden note. Call use_item whenever they use an item; "
+    "if it fails, or they claim gear they do not have, deny it in character and rate fit 0-2. Only call grant_item "
+    "for something they truly found or earned (at most 2 per run). "
     f"This run is exactly {MAX_TURNS} player prompts long. Treat it as a short story with a beginning, "
     "middle and end, and never continue it after the final turn. Keep every reply moving the player toward or away from that goal. Hidden "
     "[system: ...] notes give you the turn count and the player's sheet: never quote them or lecture about the turn limit, "
@@ -134,6 +140,8 @@ TOOLS = [
                             "required": ["label", "delta"]},
                     },
                     "stat": {"type": "string", "enum": STAT_NAMES + ["none"], "description": "Class stat that clearly applies"},
+                    "followed_objective": {"type": "boolean", "description": "Did the prompt pursue this turn's objective?"},
+                    "met_constraint": {"type": "boolean", "description": "Did it respect this turn's constraint, if any?"},
                 },
                 "required": ["specificity", "creativity", "fit", "quote", "breakdown"],
             },
@@ -187,15 +195,45 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "set_mission",
-            "description": "Set this run's mission. Call once at the start of a run with ONE concrete, achievable goal.",
+            "name": "set_objective",
+            "description": "Set the concrete beat the player's NEXT prompt must accomplish. Call at the end of every reply except the final one.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Short mission name, e.g. 'Criteria Heist'"},
-                    "objective": {"type": "string", "description": "One concrete goal, e.g. 'Steal the judging criteria from the Delta Corp server room'"},
+                    "text": {"type": "string", "description": "e.g. 'Get past the toll drones onto the bridge deck'"},
+                    "constraint": {"type": "string", "description": "Optional, e.g. 'without firing a weapon'. Empty for none."},
                 },
-                "required": ["title", "objective"],
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grant_item",
+            "description": "Give the player an item they found or earned. Inventory holds 6. At most 2 per run.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short item name"},
+                    "description": {"type": "string", "description": "One short line"},
+                },
+                "required": ["name", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_item",
+            "description": "The player uses an inventory item. Fails if they do not own it: then deny the action in character.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "consumed": {"type": "boolean", "description": "true if it is used up (grenade, patch), false for tools"},
+                },
+                "required": ["name"],
             },
         },
     },
@@ -217,14 +255,15 @@ TOOLS = [
 ]
 
 STATIC_DIR = Path(__file__).parent / "static"
-DEFAULT_MISSION = {"title": "Criteria Heist", "objective": "Steal the judging criteria from the Delta Corp server room"}
+MAX_ITEMS = 6
 START_HP, START_HUMANITY, START_CREDS = 20, 100, 500
 
 
 def new_run_state() -> dict:
     return {"hp": START_HP, "location": "street", "mission": {"title": "", "objective": ""},
             "turn": 0, "max_turns": MAX_TURNS, "rating": None, "opened": False, "humanity_start": None,
-            "turns": [], "combo": 0, "creds_gained": 0}
+            "turns": [], "combo": 0, "creds_gained": 0, "beat": {"text": "", "constraint": ""}, "seed": None,
+            "grants": 0}
 
 
 api_key = os.environ.get("BACKBOARD_API_KEY", "")
@@ -525,6 +564,14 @@ def rate_turn(ctx: Ctx, args: dict, events: dict) -> dict:
         items.append({"label": "impossible or contradicts the scene", "delta": -12})
     if injected:
         items.append({"label": "tried to rewrite the rules", "delta": -15})
+    beat = st.get("beat") or {}
+    if beat.get("text"):
+        if args.get("followed_objective") is False:
+            items.append({"label": "ignored this turn's objective", "delta": -10})
+        elif beat.get("constraint") and args.get("met_constraint") is True:
+            items.append({"label": "met the constraint", "delta": 10})
+        elif beat.get("constraint") and args.get("met_constraint") is False:
+            items.append({"label": "broke the constraint", "delta": -5})
     if stat_bonus:
         items.append({"label": f"{stat.upper()} {ctx.p['stats'][stat]} applies", "delta": 0, "power": stat_bonus})
 
@@ -534,7 +581,7 @@ def rate_turn(ctx: Ctx, args: dict, events: dict) -> dict:
     quote = str(args.get("quote", "")).strip().strip('"\'')[:80]
     if not quote or quote.lower() not in text.lower():
         quote = text[:60] + ("..." if len(text) > 60 else "")
-    rec = {"n": st["turn"], "quote": quote, "specificity": spec, "creativity": crea, "fit": fit,
+    rec = {"n": st["turn"], "quote": quote, "beat": dict(beat), "specificity": spec, "creativity": crea, "fit": fit,
            "action_score": action, "d20": d20, "stat": stat, "stat_bonus": stat_bonus, "power": round(power),
            "tier": tier, "breakdown": items, "combo": st["combo"], "combo_bonus": combo_bonus,
            "turn_score": turn_score, "turn_grade": grade_for(turn_score)}
@@ -547,6 +594,20 @@ def rate_turn(ctx: Ctx, args: dict, events: dict) -> dict:
         events["stat_changes"].append({"stat": "hp", "amount": -4, "new": st["hp"]})
     return {"tier": tier, "d20": d20, "prompt_power": round(power),
             "narrate": f"Outcome {tier}: {TIER_RULES[tier]} Narrate exactly this. Reference their words: \"{quote}\"."}
+
+
+def find_item(p: dict, name: str) -> Optional[dict]:
+    key = name.strip().lower()
+    return next((i for i in p["inventory"] if i["name"].lower() == key), None) or \
+        next((i for i in p["inventory"] if key and (key in i["name"].lower() or i["name"].lower() in key)), None)
+
+
+def daily_mission_index() -> int:
+    return toronto_now().timetuple().tm_yday % len(MISSIONS)
+
+
+def daily_market() -> list:
+    return random.Random("market-" + day_str()).sample(MARKET, 6)
 
 
 def execute_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
@@ -589,14 +650,45 @@ def execute_tool(ctx: Ctx, name: str, args: dict, events: dict) -> dict:
         events["locations"].append(loc)
         return {"location": loc}
 
-    if name == "set_mission":
-        if st["mission"]["objective"]:
-            return {"error": "mission already set for this run", "mission": st["mission"]}
-        objective = str(args.get("objective", "")).strip()[:160]
-        if not objective:
-            return {"error": "objective is required"}
-        st["mission"] = {"title": str(args.get("title", "")).strip()[:48] or "Untitled Run", "objective": objective}
-        return {"mission": st["mission"]}
+    if name == "set_objective":
+        if st["turn"] >= st["max_turns"]:
+            return {"error": "the run is ending; no next objective"}
+        text = str(args.get("text", "")).strip()[:120]
+        if not text:
+            return {"error": "text is required"}
+        st["beat"] = {"text": text, "constraint": str(args.get("constraint", "") or "").strip()[:60]}
+        events["beat_set"] = True
+        return {"objective": st["beat"]}
+
+    if name == "grant_item":
+        iname = str(args.get("name", "")).strip()[:32]
+        if not iname:
+            return {"error": "name is required"}
+        if st["grants"] >= 2:
+            return {"error": "no more items this run"}
+        if len(p["inventory"]) >= MAX_ITEMS:
+            return {"error": f"inventory full ({MAX_ITEMS}); the player must leave it behind"}
+        if find_item(p, iname):
+            return {"error": "the player already has one"}
+        item = {"name": iname, "description": str(args.get("description", "")).strip()[:80]}
+        p["inventory"].append(item)
+        st["grants"] += 1
+        events["items_gained"].append(item)
+        return {"granted": item, "inventory": [i["name"] for i in p["inventory"]]}
+
+    if name == "use_item":
+        iname = str(args.get("name", "")).strip()
+        item = find_item(p, iname)
+        if not item and any(iname.lower() in u.lower() or u.lower() in iname.lower() for u in events["items_used"] if iname):
+            return {"used": iname, "note": "already used this turn"}  # duplicate call, not a false claim
+        if not item:
+            events["items_denied"].append(iname[:32])
+            return {"error": f"the player does not own '{iname}'. Deny it in character.",
+                    "inventory": [i["name"] for i in p["inventory"]], "cyberware": p["cyberware"]}
+        if args.get("consumed", True) is not False:
+            p["inventory"].remove(item)
+            events["items_used"].append(item["name"])
+        return {"used": item["name"], "consumed": args.get("consumed", True) is not False}
 
     if name == "submit_rating":
         final_turn = st["turn"] >= st["max_turns"] and events.get("turn_rating")
@@ -678,6 +770,7 @@ def run_fields(ctx: Ctx) -> dict:
         "max_turns": st["max_turns"],
         "rating": st["rating"],
         "opened": st["opened"],
+        "beat": st["beat"] if ctx.active and st["turn"] < st["max_turns"] else None,
         "run_over": bool(ctx.run and ctx.run["finished"]),
     }
 
@@ -792,7 +885,8 @@ def player_sheet(ctx: Ctx) -> str:
     stats = ", ".join(f"{k} {v}" for k, v in p["stats"].items())
     return (f"Player: {p['handle']}, class {CLASSES.get(p['class'], {}).get('name', '?')} ({stats}). "
             f"HP {ctx.st['hp']}, Humanity {p['humanity']}, creds {p['creds']}, "
-            f"cyberware: {', '.join(p['cyberware']) or 'none'}.")
+            f"cyberware: {', '.join(p['cyberware']) or 'none'}. Inventory, the ONLY items they can use: "
+            f"{'; '.join(i['name'] + ' (' + i['description'] + ')' for i in p['inventory']) or 'empty'}.")
 
 
 def opening_message(ctx: Ctx, kind: str) -> str:
@@ -802,19 +896,24 @@ def opening_message(ctx: Ctx, kind: str) -> str:
                 "this mission so far, then set the scene and give me a choice.")
     if ctx.p["missions"]:
         return ("A new day, a new run. Briefly nod to what you remember about me from earlier runs, then brief me "
-                "on the new mission and set the opening scene. End with a clear choice.")
+                "on today's mission and set the opening scene. End on my first objective.")
     return ("I am a new runner jacking in for the first time. Introduce the world of Neo-Hamilton 2077, brief me "
-            "on my mission and set the opening scene. End with a clear choice.")
+            "on today's mission and set the opening scene. End on my first objective.")
 
 
 def pacing_note(ctx: Ctx) -> str:
     st = ctx.st
-    if not st["mission"]["objective"]:
-        kind = random.choice(["heist", "rescue", "sabotage", "escape", "delivery"])  # nudge variety across runs
-        return ("[system: start a new run. Call set_mission with one specific goal, then set the opening scene. "
-                f"This run is a {kind} mission, different from any earlier run. {player_sheet(ctx)}]")
+    seed = MISSIONS[st["seed"]] if st["seed"] is not None else None
     t, n = st["turn"], st["max_turns"]
     sheet = player_sheet(ctx)
+    if seed and t < n:  # the seed's next beat steers set_objective
+        sheet += f" Seed beat for the next prompt: {seed['beats'][min(t, n - 1)]}."
+    if t == 0 and seed:
+        beats = " ".join(f"{i + 1}) {b}." for i, b in enumerate(seed["beats"]))
+        return (f"[system: today's mission, the same seed for every runner: {seed['title']}: {seed['objective']}. "
+                f"Locations: {' then '.join(seed['locations'])}. Beats: {beats} Twist, reveal around prompt 3: "
+                f"{seed['twist']} Open in {seed['locations'][0]}, set the scene, then call set_objective for "
+                f"prompt 1. {sheet}]")
     if t >= n:
         return (f"[system: turn {n} of {n}. FINAL TURN. Resolve the mission NOW as a success, partial success "
                 "or failure based on the tier rate_action returns and the run so far. Write a definitive ending in under "
@@ -834,7 +933,7 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
     aid = await ensure_assistant(ctx)
     model_cfg = MODE_MODELS.get(mode, MODE_MODELS[DEFAULT_MODE])
     events = {"rolls": [], "stat_changes": [], "installed": [], "locations": [], "judging": False,
-              "player_text": "", "turn_rating": None}
+              "player_text": "", "turn_rating": None, "items_gained": [], "items_used": [], "items_denied": []}
     kwargs = dict(assistant_id=aid, memory="Auto", tools=TOOLS, **model_cfg)
     if ctx.run["thread_id"]:
         kwargs["thread_id"] = ctx.run["thread_id"]
@@ -848,8 +947,10 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
         message = opening_message(ctx, kind)
     note = pacing_note(ctx)
     if counted:
+        named = [i["name"] for i in ctx.p["inventory"] if i["name"].lower() in message.lower()]
         note = ("[system: the text above is the player's action. First call rate_action on it, then narrate exactly "
-                "the tier it returns.] " + note)
+                "the tier it returns." + (f" They are using {', '.join(named)}: call use_item for each." if named else "")
+                + "] " + note)
     resp = await _exchange(ctx, f"{message}\n\n{note}", kwargs, events)  # on error nothing is saved
     if counted:
         mark_started(ctx)
@@ -859,8 +960,13 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
         events["rolls"] = [events["turn_rating"]["d20"]]
     st["opened"] = True
     text = _get(resp, "content", default="") or "[signal lost — the net flickers]"
-    if not st["mission"]["objective"]:
-        st["mission"] = dict(DEFAULT_MISSION)  # GM skipped set_mission; keep the run playable
+    if events["items_denied"] and events["turn_rating"]:  # claimed gear they don't own: punished server-side
+        rec = events["turn_rating"]
+        rec["breakdown"].append({"label": f"no {events['items_denied'][0]} in your kit"[:60], "delta": -12})
+        rec["turn_score"] = max(0, rec["turn_score"] - 12)
+        rec["turn_grade"] = grade_for(rec["turn_score"])
+    if st["turn"] < st["max_turns"] and not events.get("beat_set") and st["seed"] is not None:
+        st["beat"] = {"text": MISSIONS[st["seed"]]["beats"][st["turn"]], "constraint": ""}  # GM skipped set_objective
     deleted = await apply_cyberpsychosis(ctx)
 
     # Run over? One extra hidden call so the GM grades the run.
@@ -892,6 +998,9 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
         "location": st["location"],
         "locations": events["locations"],
         "deleted_memories": deleted,
+        "items_gained": events["items_gained"],
+        "items_used": events["items_used"],
+        "items_denied": events["items_denied"],
         **run_fields(ctx),
         **status_fields(ctx),
     }
@@ -980,10 +1089,10 @@ async def create_profile(body: ProfileIn, request: Request):
             return {"ok": True}
         if sql("SELECT 1 FROM players WHERE lower(handle)=lower(?)", (handle,)):
             return err(409, "That handle is taken. Pick another.")
-        sql("INSERT INTO players(id, handle, class, stats, humanity, creds, last_seen, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+        sql("INSERT INTO players(id, handle, class, stats, humanity, creds, inventory, last_seen, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
             (pid, handle, body.cls, json.dumps(CLASSES[body.cls]["stats"]), START_HUMANITY, START_CREDS,
-             day_str(), datetime.now(timezone.utc).isoformat()))
+             json.dumps([STARTER_ITEMS[body.cls]]), day_str(), datetime.now(timezone.utc).isoformat()))
     return {"ok": True}
 
 
@@ -1000,9 +1109,54 @@ async def start_run(request: Request):
             return {"ok": True}
         if not can_play(ctx):
             return err(403, "You already ran today. Come back tomorrow.", next_reset_seconds=next_reset_seconds())
+        st, i = new_run_state(), daily_mission_index()
+        seed = MISSIONS[i]
+        st.update(seed=i, mission={"title": seed["title"], "objective": seed["objective"]},
+                  location=seed["locations"][0], beat={"text": seed["beats"][0], "constraint": ""})
         sql("INSERT INTO runs(player_id, day, state, created_at) VALUES(?,?,?,?)",
-            (pid, day_str(), json.dumps(new_run_state()), datetime.now(timezone.utc).isoformat()))
+            (pid, day_str(), json.dumps(st), datetime.now(timezone.utc).isoformat()))
     return {"ok": True}
+
+
+class BuyIn(BaseModel):
+    name: str
+
+
+def market_view(p: dict) -> dict:
+    owned = {i["name"].lower() for i in p["inventory"]}
+    return {"items": [{**it, "owned": it["name"].lower() in owned} for it in daily_market()],
+            "creds": p["creds"], "inventory": p["inventory"], "max_items": MAX_ITEMS}
+
+
+@app.get("/api/market")
+async def get_market(request: Request):
+    p = load_player(request.state.pid)
+    return market_view(p) if p else err(400, "Create a runner first.")
+
+
+@app.post("/api/market/buy")
+async def buy_item(body: BuyIn, request: Request):
+    pid = request.state.pid
+    async with _LOCKS[pid]:
+        p = load_player(pid)
+        if not p:
+            return err(400, "Create a runner first.")
+        run = latest_run(pid)
+        if run and run["started"] and not run["finished"]:
+            return err(409, "The market is closed mid-run.")
+        item = next((i for i in daily_market() if i["name"].lower() == body.name.strip().lower()), None)
+        if not item:
+            return err(404, "Not on sale today.")
+        if find_item(p, item["name"]) and find_item(p, item["name"])["name"].lower() == item["name"].lower():
+            return err(409, "You already carry one.")
+        if len(p["inventory"]) >= MAX_ITEMS:
+            return err(409, f"Your kit is full ({MAX_ITEMS} items).")
+        if p["creds"] < item["price"]:
+            return err(402, "Not enough creds.")
+        p["creds"] -= item["price"]
+        p["inventory"].append({"name": item["name"], "description": item["description"]})
+        save_player(p)
+        return market_view(p)
 
 
 @app.get("/api/memories")

@@ -46,6 +46,10 @@
     <span class="label">CYBERWARE</span>
     <span id="cyber-list" class="val cyber">— none —</span>
   </div>
+  <div class="hud-stat wide" id="kit-stat">
+    <span class="label">KIT</span>
+    <span id="kit-list" class="val kit">— empty —</span>
+  </div>
   <div class="hud-controls">
     <select id="mode">
       <option value="story">MODE: STORY</option>
@@ -97,6 +101,7 @@
 
     <div id="tab-chat" class="tab active">
       <div id="chat-log"></div>
+      <div id="beat" class="beat hidden"><b>THIS TURN:</b> <span id="beat-text"></span><em id="beat-con"></em></div>
       <form id="input-row">
         <span class="prompt-char">&gt;</span>
         <input id="chat-input" type="text" autocomplete="off" maxlength="280" placeholder="what will you do next?" />
@@ -128,6 +133,18 @@
     <div id="ob-classes" class="ob-classes"></div>
     <div id="ob-error" class="ov-error"></div>
     <button id="ob-go">JACK IN</button>
+  </div>
+</div>
+
+<div id="market" class="overlay hidden">
+  <div class="ov-inner wide">
+    <div class="ov-title">BLACK MARKET</div>
+    <p class="ov-sub">Cinder Market stalls. Today's stock, open until you jack in.</p>
+    <div class="mk-creds">CREDS <b id="mk-creds">¤0</b> &nbsp;//&nbsp; KIT <b id="mk-count">0/6</b></div>
+    <div id="mk-items" class="mk-items"></div>
+    <div id="mk-kit" class="mk-kit"></div>
+    <div id="mk-error" class="ov-error"></div>
+    <button id="mk-go">JACK IN</button>
   </div>
 </div>
 

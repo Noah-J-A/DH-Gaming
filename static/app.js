@@ -59,6 +59,9 @@ function updateHUD(state) {
   $("creds-val").textContent = "\u00A4" + state.creds;
   const cls = (lastData.classes || {})[state.class];
   $("who-val").textContent = state.handle ? state.handle + (cls ? " // " + cls.name : "") : "";
+  const inv = state.inventory || [];
+  $("kit-list").textContent = inv.length ? inv.map((i) => i.name).join(" | ") : "\u2014 empty \u2014";
+  $("kit-list").title = inv.map((i) => `${i.name}: ${i.description}`).join("\n");
   $("cyber-list").textContent = state.cyberware.length ? state.cyberware.join(" | ") : "\u2014 none \u2014";
 
   document.body.classList.remove("g0", "g1", "g2", "g3");
@@ -488,6 +491,59 @@ function updateMission(d) {
   $("turns-left").classList.toggle("low", !!m.objective && left <= 2);
 }
 
+// ---------- this turn's objective (set by the GM via set_objective) ----------
+function updateBeat(d) {
+  const b = d.beat;
+  $("beat").classList.toggle("hidden", !b || !b.text || runOver);
+  if (!b) return;
+  $("beat-text").textContent = b.text;
+  $("beat-con").textContent = b.constraint ? " // " + b.constraint.toUpperCase() : "";
+}
+
+// ---------- black market: 6 daily items, bought with earned creds ----------
+function renderMarket(m) {
+  $("mk-creds").textContent = "\u00A4" + m.creds;
+  $("mk-count").textContent = `${m.inventory.length}/${m.max_items}`;
+  const box = $("mk-items");
+  box.textContent = "";
+  for (const it of m.items) {
+    const card = document.createElement("div");
+    card.className = "mk-item" + (it.owned ? " owned" : "");
+    const n = document.createElement("b"); n.textContent = it.name;
+    const dsc = document.createElement("span"); dsc.textContent = it.description;
+    const btn = document.createElement("button");
+    btn.textContent = it.owned ? "OWNED" : `BUY \u00A4${it.price}`;
+    btn.disabled = it.owned || it.price > m.creds || m.inventory.length >= m.max_items;
+    btn.addEventListener("click", async () => {
+      $("mk-error").textContent = "";
+      const res = await postJSON("/api/market/buy", { name: it.name });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { $("mk-error").textContent = d.error || "The deal fell through."; return; }
+      renderMarket(d);
+      if (lastData.state) updateHUD({ ...lastData.state, creds: d.creds, inventory: d.inventory });
+    });
+    card.append(n, dsc, btn);
+    box.appendChild(card);
+  }
+  $("mk-kit").textContent = "YOUR KIT: " + (m.inventory.map((i) => i.name).join(", ") || "empty");
+}
+
+async function showMarket(note = "") {
+  const m = await (await fetch("/api/market")).json();
+  renderMarket(m);
+  $("gameover").classList.add("hidden");
+  $("market").classList.remove("hidden");
+  $("mk-go").onclick = async () => {
+    $("mk-go").disabled = true;
+    const r = await fetch("/api/run/start", { method: "POST" });
+    $("mk-go").disabled = false;
+    if (!r.ok) { $("mk-error").textContent = (await r.json().catch(() => ({}))).error || "Could not start a run."; return; }
+    $("market").classList.add("hidden");
+    chatLog.innerHTML = "";
+    boot(note);
+  };
+}
+
 // ---------- results (replaces the old game-over screen) ----------
 function showResults(d) {
   const r = d.rating || {}, s = d.state || {}, grade = r.grade || "D";
@@ -606,6 +662,9 @@ async function sendMessage(text, kind = "turn", note = "") {
     const humDelta = changes.filter((c) => c.stat === "humanity").reduce((a, c) => a + c.amount, 0);
     const implantCost = humanity + humDelta - data.state.humanity; // read before updateHUD
     for (const c of changes) lines.push(sys(`${STAT_NAMES[c.stat] || c.stat} ${c.amount > 0 ? "+" : ""}${c.amount}`));
+    for (const it of data.items_gained || []) lines.push(sys(`+ ITEM: ${it.name}`));
+    for (const n of data.items_used || []) lines.push(sys(`- USED: ${n}`));
+    for (const n of data.items_denied || []) lines.push(sys(`!! NOT IN YOUR KIT: ${n}`));
     for (const name of installed) {
       lines.push(sys(`Installed: ${name}.` + (installed.length === 1 && implantCost > 0 ? ` Humanity -${implantCost}` : "")));
     }
@@ -621,13 +680,14 @@ async function sendMessage(text, kind = "turn", note = "") {
     first.before = async () => {
       updateHUD(data.state);
       updateMission(data);
+      updateBeat(data);
       drawScene(data.location);
       if (firstBefore) await firstBefore();
     };
 
     await playDialogue(lines, !!data.run_over);
     await (memP || refreshMemories());
-    if (data.run_over) { runOver = true; showResults(data); }
+    if (data.run_over) { runOver = true; updateBeat(data); showResults(data); }
   } catch (e) {
     await playDialogue([sys("!! uplink failed: " + e.message)]);
   } finally {
@@ -644,6 +704,7 @@ async function boot(note = "") {
     if (data.needs_profile) { showOnboard(data.classes); return; }
     updateHUD(data.state);
     updateMission(data);
+    updateBeat(data);
     drawScene(data.state.location);
     renderMemories(data.memories || []);
     if (data.run_over) { // today's run is finished
@@ -653,9 +714,8 @@ async function boot(note = "") {
     }
     if (!data.active) {
       if (!data.can_play) { runOver = true; setBusy(false); showComeback(data); return; }
-      const res = await fetch("/api/run/start", { method: "POST" });
-      if (!res.ok) { await playDialogue([sys("!! " + ((await res.json().catch(() => ({}))).error || "could not start a run"))]); return; }
-      return boot(note);
+      runOver = false; setBusy(false);
+      return showMarket(note); // shop first, then JACK IN starts the run
     }
     runOver = false;
     if (data.opened) sendMessage("", "resume", note || "// resuming neural link \u2014 mission in progress");
@@ -695,11 +755,9 @@ $("new-campaign").addEventListener("click", async () => {
 // PLAY AGAIN: new run, same NEXUS (memories carry over)
 $("restart-btn").addEventListener("click", async () => {
   if (!lastData.can_play) { showComeback(lastData); return; }
-  await fetch("/api/run/start", { method: "POST" });
   runOver = false;
   $("gameover").classList.add("hidden");
-  chatLog.innerHTML = "";
-  boot("// NEW RUN \u2014 fresh body, same NEXUS");
+  showMarket("// NEW RUN \u2014 fresh body, same NEXUS");
 });
 
 boot();

@@ -430,3 +430,28 @@ body.g3 #crt { animation: flicker 1.1s infinite; }
   .ob-classes { grid-template-columns: 1fr; }
   .cb-timer { font-size: 40px; }
 }
+
+/* ---- kit, objective banner, black market ---- */
+.val.kit { color: #cde; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.beat { margin: 4px 8px 6px; padding: 6px 8px; border: 1px dashed var(--yellow); color: #cde; font-size: 12px; line-height: 1.4; }
+.beat b { color: var(--yellow); letter-spacing: 2px; }
+.beat em { color: var(--pink); font-style: normal; }
+.beat.hidden { display: none; }
+button:disabled { opacity: .45; cursor: default; }
+button:disabled:hover { background: #000; color: var(--yellow); }
+.ov-inner.wide { max-width: 780px; }
+.ov-sub { color: #8ab; font-size: 13px; }
+.mk-creds { color: #cde; letter-spacing: 2px; font-size: 13px; }
+.mk-creds b { color: var(--yellow); }
+.mk-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; }
+.mk-item { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 10px; border: 1px solid #1d3a44; background: #05090d; }
+.mk-item b { color: var(--yellow); letter-spacing: 1px; }
+.mk-item span { color: #cde; font-size: 12px; line-height: 1.4; flex: 1; }
+.mk-item.owned { opacity: .55; }
+.mk-kit { color: #8ab; font-size: 12px; }
+#mk-go { font-size: 16px; padding: 12px 28px; }
+@media (max-width: 600px) {
+  .hud-stat.wide { flex: 1 1 calc(50% - 10px); }
+  .mk-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .beat { margin: 2px 0 4px; font-size: 11px; }
+}
