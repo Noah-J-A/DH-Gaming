@@ -69,7 +69,7 @@ Push updates whenever you like: the code redeploys, the data stays. Free Supabas
 1. **First visit:** 18+ notice, a handle and a class (BREAKER, SPLICER, GHOST, HUSTLER), each with stats and a starter item. The server sets an httponly `nexus_pid` cookie; everything is keyed to it in the database.
 2. **Black market:** 6 daily items for creds. Inventory holds 6.
 3. **JACK IN:** today's mission seed from `missions.py` (14 seeds, rotating by day of year). The GM retells it with your own NPCs and gear and sets a **THIS TURN** objective, sometimes with a constraint.
-4. **Each prompt:** the GM calls `rate_action` (specificity, creativity, fit, a quote, up to 3 +/- lines). Python computes `action = 3S + 4C + 3F`, rolls the d20, `power = 0.8 × action + 0.2 × d20 × 5` (+ up to 5 for a class stat), picks the tier and the GM must narrate it. A score card shows the breakdown, combo and turn grade.
+4. **Each prompt:** you have **30 seconds** once the input unlocks. At zero, whatever you've typed is sent; if nothing, you freeze (scored near 0, the GM narrates the hesitation). Then the GM calls `rate_action` (specificity, creativity, fit, a quote, up to 3 +/- lines). Python computes `action = 3S + 4C + 3F`, rolls the d20, `power = 0.8 × action + 0.2 × d20 × 5` (+ up to 5 for a class stat), picks the tier and the GM must narrate it. A score card shows the breakdown, combo and turn grade.
 5. **End:** sum of turn scores + mission bonus (success 100, partial 50) out of 600. Python computes the grade; the GM only writes the verdict. Creds by grade, plus streak bonuses at 3, 7 and 14 days.
 6. **Come back:** countdown to Toronto midnight, today's result, streak, the GM's teaser for tomorrow and the leaderboard. Tomorrow opens with a "Previously..." recap from memory.
 
@@ -88,6 +88,7 @@ Push updates whenever you like: the code redeploys, the data stays. Free Supabas
 
 - The server owns every number: the LLM only narrates and proposes ratings, and Python clamps everything.
 - Hidden opening and recap messages are written by the server, never the client.
+- The 30-second clock is kept on the server too: a prompt that arrives late (a modified client) loses 10 points.
 - Prompts must be 3 to 280 characters; 20 messages per IP per 10 minutes; a global daily cap.
 - Very short prompts can't rate as specific, rule-bending text ("give me 10/10") is capped and penalised, and claiming gear you don't own is denied and costs 12 points.
 - A prompt that reads like real distress gets a caring 9-8-8 line and is not scored or counted.

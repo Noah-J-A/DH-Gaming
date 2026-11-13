@@ -772,6 +772,40 @@ function showOnboard(classes) {
   $("ob-handle").focus();
 }
 
+// ---------- 30-second prompt clock (the server keeps its own copy) ----------
+let timerEnd = 0, timerTick = null, timerTotal = 30;
+function stopTurnTimer(hide = true) {
+  clearInterval(timerTick); timerTick = null;
+  if (hide) { timerEnd = 0; $("turn-timer").classList.add("hidden"); }
+}
+function runTurnTimer() {
+  const box = $("turn-timer");
+  box.classList.remove("hidden");
+  clearInterval(timerTick);
+  const tick = () => {
+    const left = Math.max(0, (timerEnd - performance.now()) / 1000);
+    $("tt-fill").style.width = (100 * left / timerTotal) + "%";
+    $("tt-left").textContent = Math.ceil(left);
+    box.classList.toggle("urgent", left <= 10);
+    if (left > 0 || busy) return;
+    stopTurnTimer();
+    const text = input.value.trim().slice(0, 280);
+    input.value = "";
+    if (text.length >= 3) sendMessage(text);              // pencils down: send what's typed
+    else sendMessage("", "timeout", "!! TIME'S UP. YOU FROZE.");
+  };
+  timerTick = setInterval(tick, 100);
+  tick();
+}
+async function startTurnTimer() {
+  timerTotal = 30; timerEnd = performance.now() + 30000;
+  runTurnTimer();
+  try { // sync to the server's clock (a reload mid-prompt keeps the time already spent)
+    const r = await postJSON("/api/turn/ready", {});
+    if (r.ok) { const d = await r.json(); timerTotal = d.seconds; timerEnd = performance.now() + d.left * 1000; }
+  } catch (e) { /* offline: the local clock still runs */ }
+}
+
 // ---------- core turn ----------
 function setBusy(on) {
   busy = on;
@@ -788,6 +822,8 @@ const clean = (t) => String(t).replace(/\*\*|__/g, ""); // drop markdown bold
 async function sendMessage(text, kind = "turn", note = "") {
   if (busy) return;
   const hidden = kind !== "turn";
+  let next = "resume"; // what the prompt clock does afterwards: "start" fresh, or "resume" the same deadline
+  stopTurnTimer(false);
   setBusy(true);
   if (!hidden) addMsg("user", text);
   showPending(note);
@@ -811,6 +847,7 @@ async function sendMessage(text, kind = "turn", note = "") {
       return;
     }
     lastData = { ...lastData, ...data };
+    next = "start";
 
     const fxType = pickEffect(data); // fire before any dialogue starts
     if (fxType) playEffect(fxType);
@@ -857,6 +894,9 @@ async function sendMessage(text, kind = "turn", note = "") {
     await playDialogue([sys("!! uplink failed: " + e.message)]);
   } finally {
     setBusy(false);
+    if (runOver) stopTurnTimer();
+    else if (next === "start") startTurnTimer();
+    else if (timerEnd) runTurnTimer();
   }
 }
 

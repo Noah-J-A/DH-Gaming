@@ -52,6 +52,7 @@ UNLIMITED_COOKIE = "nexus_unlimited"
 UNLIMITED = contextvars.ContextVar("unlimited", default=False)  # set per request by the cookie middleware
 MAX_DAILY_MESSAGES = int(os.environ.get("MAX_DAILY_MESSAGES") or 3000)  # global cap, all players
 IP_LIMIT, IP_WINDOW = 20, 600  # messages per IP per 10 minutes
+TURN_SECONDS, TURN_GRACE, READ_SLACK = 30, 6, 180  # per-prompt clock, network grace, max reading time
 PROMPT_MIN, PROMPT_MAX = 3, 280
 
 SYSTEM_PROMPT = (
@@ -678,6 +679,16 @@ def grade_for(pct: float) -> str:
     return "S" if pct >= 85 else "A" if pct >= 70 else "B" if pct >= 55 else "C" if pct >= 40 else "D" if pct >= 25 else "F"
 
 
+def turn_overdue(st: dict) -> bool:
+    """True if this prompt arrived after its 30 seconds (plus grace). The clock starts at the client's ready ping,
+    and at the latest READ_SLACK after the GM's reply, so a modified client can't stall it forever."""
+    reply_at = st.get("reply_at")
+    if not reply_at:
+        return False  # run started before the timer existed
+    start = min(st.get("ready_at") or reply_at + READ_SLACK, reply_at + READ_SLACK)
+    return time.time() - start > TURN_SECONDS + TURN_GRACE
+
+
 def rate_turn(ctx: Ctx, args: dict, events: dict) -> dict:
     """80% prompt quality, 20% dice. The GM only proposes the three ratings; Python does all the math."""
     st, text = ctx.st, events.get("player_text") or ""
@@ -1194,14 +1205,22 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
         kwargs["thread_id"] = ctx.run["thread_id"]
 
     st = ctx.st
-    counted = kind == "turn"
+    counted = kind in ("turn", "timeout")
+    late = kind == "turn" and turn_overdue(st)  # measured on arrival, before the LLM call
     if counted:
         st["turn"] += 1
-        events["player_text"] = message
+        events["player_text"] = message if kind == "turn" else "(froze)"
     else:
         message = opening_message(ctx, kind)
     note = pacing_note(ctx)
-    if counted:
+    if kind == "timeout":  # the clock ran out with nothing typed: rated here, the GM only narrates it
+        rate_turn(ctx, {"specificity": 0, "creativity": 0, "fit": 0,
+                        "breakdown": [{"label": "froze, out of time", "delta": -10}]}, events)
+        message = "I freeze. I hesitate too long and do nothing."
+        note = (f"[system: the player ran out of time. This turn is already rated {events['turn_rating']['tier']}: "
+                "do not call rate_action. Narrate their hesitation and what it costs them at that tier in 2-4 "
+                "sentences, then end on their next objective.] " + note)
+    elif counted:
         named = [i["name"] for i in ctx.p["inventory"] if i["name"].lower() in message.lower()]
         note = ("[system: the text above is the player's action. First call rate_action on it, then narrate exactly "
                 "the tier it returns. If it changed how an NPC feels, call update_npc with a short note."
@@ -1218,12 +1237,19 @@ async def run_turn(ctx: Ctx, message: str, mode: str, kind: str) -> dict:
                                 "breakdown": [{"label": "GM signal lost, neutral rating", "delta": 0}]}, events)
             events["rolls"] = [events["turn_rating"]["d20"]]
     st["opened"] = True
-    text = _get(resp, "content", default="") or "[signal lost — the net flickers]"
+    text = _get(resp, "content", default="") or ("You hesitate. The moment slips away, and Neo-Hamilton doesn't wait."
+                                                  if kind == "timeout" else "[signal lost — the net flickers]")
     if events["items_denied"] and events["turn_rating"]:  # claimed gear they don't own: punished server-side
         rec = events["turn_rating"]
         rec["breakdown"].append({"label": f"no {events['items_denied'][0]} in your kit"[:60], "delta": -12})
         rec["turn_score"] = max(0, rec["turn_score"] - 12)
         rec["turn_grade"] = grade_for(rec["turn_score"])
+    if late and events["turn_rating"]:  # sent after the clock ran out (a modified client): punished server-side
+        rec = events["turn_rating"]
+        rec["breakdown"].append({"label": "over the time limit", "delta": -10})
+        rec["turn_score"] = max(0, rec["turn_score"] - 10)
+        rec["turn_grade"] = grade_for(rec["turn_score"])
+    st["reply_at"], st["ready_at"] = time.time(), None  # next prompt's clock starts when the client is ready
     if st["turn"] < st["max_turns"] and not events.get("beat_set") and st["seed"] is not None:
         st["beat"] = {"text": MISSIONS[st["seed"]]["beats"][st["turn"]], "constraint": ""}  # GM skipped set_objective
     deleted = await apply_cyberpsychosis(ctx)
@@ -1455,7 +1481,7 @@ async def get_memories_ep(request: Request):
 async def post_message(body: MessageIn, request: Request):
     if not api_key or api_key == "PUT_YOUR_KEY_HERE":
         return err(500, "BACKBOARD_API_KEY missing: put it in .env")
-    kind = body.kind if body.kind in ("turn", "open", "resume") else "turn"
+    kind = body.kind if body.kind in ("turn", "open", "resume", "timeout") else "turn"
     text = body.message.strip()
     if kind == "turn" and not PROMPT_MIN <= len(text) <= PROMPT_MAX:
         return err(400, f"Prompts must be {PROMPT_MIN} to {PROMPT_MAX} characters.")
@@ -1472,7 +1498,7 @@ async def post_message(body: MessageIn, request: Request):
         if not ctx.active:
             return err(409, "run over")
         st = ctx.st
-        if kind == "turn" and (st["rating"] is not None or run_end_reason(ctx) or not st["opened"]):
+        if kind in ("turn", "timeout") and (st["rating"] is not None or run_end_reason(ctx) or not st["opened"]):
             return err(409, "run over")  # hard stop: no LLM call
         if kind == "open" and st["opened"]:
             kind = "resume"
@@ -1483,6 +1509,22 @@ async def post_message(body: MessageIn, request: Request):
             if is_quota_or_auth_error(e):
                 msg = "NETWORK QUOTA EXCEEDED: " + msg
             return err(500, msg)
+
+
+@app.post("/api/turn/ready")
+async def turn_ready(request: Request):
+    """The input just unlocked: this prompt's clock starts now. Only the first ping per prompt counts."""
+    pid = request.state.pid
+    async with _LOCKS[pid]:
+        p = load_player(pid)
+        ctx = Ctx(p, latest_run(pid)) if p else None
+        if not ctx or not ctx.active or not ctx.st["opened"] or ctx.st["rating"] is not None:
+            return err(409, "no prompt pending")
+        if not ctx.st.get("ready_at"):
+            ctx.st["ready_at"] = time.time()
+            save_run(ctx.run)
+        left = TURN_SECONDS - (time.time() - ctx.st["ready_at"])
+    return {"seconds": TURN_SECONDS, "left": max(0, round(left, 1))}
 
 
 @app.post("/api/new_session")

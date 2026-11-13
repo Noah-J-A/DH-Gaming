@@ -525,3 +525,12 @@ button:disabled:hover { background: #000; color: var(--yellow); }
 #go-board { margin-top: 8px; }
 .cb-teaser { color: var(--pink); font-style: italic; font-size: 14px; line-height: 1.5; text-shadow: 0 0 8px rgba(255,59,92,.4); }
 .cb-teaser:empty { display: none; }
+
+/* ---- 30-second prompt clock ---- */
+.turn-timer { position: relative; height: 16px; margin: 6px 4px 0; background: #0b1a20; border: 1px solid #12323b; overflow: hidden; }
+.turn-timer.hidden { display: none; }
+#tt-fill { height: 100%; width: 100%; background: linear-gradient(90deg, var(--teal), #0ff); transition: width .1s linear; }
+#tt-left { position: absolute; right: 6px; top: 0; font-size: 11px; line-height: 16px; color: #fff; letter-spacing: 1px; }
+.turn-timer.urgent #tt-fill { background: linear-gradient(90deg, var(--pink), #ff7a59); }
+.turn-timer.urgent { animation: tt-pulse .5s ease-in-out infinite alternate; }
+@keyframes tt-pulse { from { box-shadow: 0 0 0 rgba(255,59,92,0); } to { box-shadow: 0 0 10px rgba(255,59,92,.6); } }
