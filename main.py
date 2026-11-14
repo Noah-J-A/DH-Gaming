@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1368,9 +1368,19 @@ class ProfileIn(BaseModel):
 HANDLE_RE = re.compile(r"^[A-Za-z0-9_ ]{3,16}$")
 
 
+def _index_html() -> str:
+    """index.html with ?v=<content hash> on the CSS and JS, so phones never keep a stale copy after a deploy."""
+    ver = hashlib.sha1(b"".join((STATIC_DIR / f).read_bytes() for f in ("app.js", "style.css"))).hexdigest()[:10]
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return html.replace('/static/style.css"', f'/static/style.css?v={ver}"').replace('/static/app.js"', f'/static/app.js?v={ver}"')
+
+
+INDEX_HTML = _index_html()
+
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return HTMLResponse(INDEX_HTML, headers={"Cache-Control": "no-cache"})
 
 
 @app.get(f"/{UNLIMITED_SLUG}")

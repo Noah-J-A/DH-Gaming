@@ -534,3 +534,39 @@ button:disabled:hover { background: #000; color: var(--yellow); }
 .turn-timer.urgent #tt-fill { background: linear-gradient(90deg, var(--pink), #ff7a59); }
 .turn-timer.urgent { animation: tt-pulse .5s ease-in-out infinite alternate; }
 @keyframes tt-pulse { from { box-shadow: 0 0 0 rgba(255,59,92,0); } to { box-shadow: 0 0 10px rgba(255,59,92,.6); } }
+
+/* ---- small screens: the objective, the clock and the input never leave the screen ---- */
+#beat, #turn-timer, #input-row { flex: none; }  /* the layout squeezes everything else first */
+@media (max-width: 900px) and (orientation: portrait) {  /* phones and tablets: one screen, no scrolling */
+  body { height: 100vh; height: 100dvh; overflow: hidden; }
+  #layout { flex: 1; min-height: 0; }
+  #scene-pane { flex: none; }
+  #phone { flex: 1 1 0; height: auto; min-height: 150px; }
+}
+@media (max-width: 600px) {
+  #hud, #mission-bar { flex: none; }
+  #scene, #wipe { aspect-ratio: auto; height: clamp(80px, 24dvh, 56vw); object-fit: cover; }
+  #dialogue { max-height: 30dvh; overflow-y: auto; }
+  .beat { max-height: calc(3 * 1.4em + 14px); overflow-y: auto; }  /* up to 3 lines, scrolls if longer */
+  .turn-timer { height: 20px; }
+  #tt-left { font-size: 13px; line-height: 20px; }
+}
+@media (max-width: 600px) and (max-height: 640px) {  /* short phones */
+  #mission-obj { display: none; }
+  #scene, #wipe { height: clamp(70px, 18dvh, 56vw); }
+  .hud-controls > * { padding: 4px; }
+}
+@media (max-width: 600px) and (max-height: 460px) {  /* keyboard open: story text + dock only */
+  #hud, #mission-bar, #scene, #wipe, #scene-label { display: none; }
+  #dialogue { margin-top: 4px; max-height: 26dvh; }
+  .phone-tabs { margin-bottom: 4px; }
+}
+@media (min-width: 601px) and (max-height: 500px) and (orientation: landscape) {  /* phones on their side */
+  body { height: 100vh; height: 100dvh; overflow: hidden; }
+  #layout { flex-direction: row; flex: 1; min-height: 0; padding: 6px 10px; gap: 10px; }
+  #scene-pane { flex: 1; min-width: 0; container-type: size; }
+  #scene-wrap { width: min(100cqw, 100cqh * 16 / 9); }
+  #phone { width: 44%; height: auto; flex: none; border-radius: 10px; padding: 6px 8px; box-shadow: none; }
+  .phone-notch, .phone-status, .phone-header, #mission-obj { display: none; }
+  #hud { padding: 4px 10px; gap: 4px 12px; flex-wrap: wrap; }
+}

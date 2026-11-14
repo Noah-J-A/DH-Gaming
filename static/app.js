@@ -774,9 +774,10 @@ function showOnboard(classes) {
 
 // ---------- 30-second prompt clock (the server keeps its own copy) ----------
 let timerEnd = 0, timerTick = null, timerTotal = 30;
-function stopTurnTimer(hide = true) {
+function stopTurnTimer(reset = true) {  // reset=false: paused while the GM answers, same deadline kept
   clearInterval(timerTick); timerTick = null;
-  if (hide) { timerEnd = 0; $("turn-timer").classList.add("hidden"); }
+  $("turn-timer").classList.add("hidden");
+  if (reset) timerEnd = 0;
 }
 function runTurnTimer() {
   const box = $("turn-timer");
